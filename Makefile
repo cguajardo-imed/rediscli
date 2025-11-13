@@ -1,4 +1,4 @@
-.PHONY: help build test test-verbose test-coverage clean install run docker-up docker-down lint fmt vet all
+.PHONY: help build test test-verbose test-coverage clean install run docker-up docker-down docker-check lint fmt vet all
 
 # Default target
 help:
@@ -11,6 +11,7 @@ help:
 	@echo "  make clean           - Remove build artifacts"
 	@echo "  make install         - Install the binary to /usr/local/bin"
 	@echo "  make run             - Run the application"
+	@echo "  make docker-check    - Check if Docker is ready for tests"
 	@echo "  make docker-up       - Start Redis container for testing"
 	@echo "  make docker-down     - Stop Redis container"
 	@echo "  make lint            - Run linter"
@@ -36,8 +37,25 @@ build-all:
 	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/rediscli-darwin-arm64 .
 	@echo "All builds complete! Check the dist/ directory"
 
+# Check if Docker is ready
+docker-check:
+	@echo "Checking Docker environment..."
+	@if [ "$(OS)" = "Windows_NT" ]; then \
+		if [ -f "check-docker.bat" ]; then \
+			cmd //c check-docker.bat; \
+		else \
+			echo "Run: docker ps"; \
+		fi \
+	else \
+		if [ -f "check-docker.sh" ]; then \
+			chmod +x check-docker.sh && ./check-docker.sh; \
+		else \
+			docker ps; \
+		fi \
+	fi
+
 # Run tests
-test:
+test: docker-check
 	go test -v ./...
 
 # Run tests with verbose output
@@ -71,7 +89,7 @@ run: build
 	@echo "Set REDIS_HOST and other env vars before running"
 
 # Start Redis container for local testing
-docker-up:
+docker-up: docker-check
 	docker run -d --name redis-test -p 6379:6379 redis:7-alpine
 	@echo "Redis container started on port 6379"
 	@echo "Run: export REDIS_HOST=localhost"

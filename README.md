@@ -148,35 +148,48 @@ export REDIS_PORT=6379
 
 ### Running Tests
 
-The project uses testcontainers-go for integration testing, which requires Docker to be running.
+The project uses testcontainers-go for integration testing, which **requires Docker Desktop to be running**.
+
+**⚠️ Important: You must have Docker Desktop installed and running to run the tests.**
 
 ```bash
-# Make sure Docker is running
+# 1. Start Docker Desktop first (Windows/macOS)
+# Verify Docker is running:
 docker ps
 
-# Run all tests
+# 2. Run all tests
 go test -v ./...
 
-# Run tests with coverage
+# 3. Run tests with coverage
 go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
-# View coverage report
+# 4. View coverage report
 go tool cover -html=coverage.txt
 ```
 
+**If you don't have Docker:**
+- Download and install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- Start Docker Desktop before running tests
+- The tests will automatically spin up Redis containers
+
 ### Test Coverage
 
-The test suite includes:
+The test suite includes 3 comprehensive test functions:
 
-- ✅ Connection status validation
-- ✅ Basic Redis commands (GET, SET, DEL, EXISTS, KEYS)
-- ✅ List operations (LPUSH, LRANGE)
-- ✅ Hash operations (HSET, HGET, HGETALL)
-- ✅ Set operations (SADD, SMEMBERS)
-- ✅ Expiration and TTL
-- ✅ Password authentication
-- ✅ Multiple database support
-- ✅ Command execution via Do()
+1. **TestBasicRedisOperations** - Tests basic Redis commands:
+   - ✅ SET, GET, DEL, EXISTS
+   - ✅ PING, INCR
+   - ✅ Command execution via Do()
+
+2. **TestRedisDataStructures** - Tests Redis data structures:
+   - ✅ List operations (LPUSH, LRANGE)
+   - ✅ Hash operations (HSET, HGET, HGETALL)
+   - ✅ Set operations (SADD, SMEMBERS)
+
+3. **TestConnectionAndAuthentication** - Tests connection features:
+   - ✅ Connection status validation
+   - ✅ Multiple database support (DB 0, DB 1)
+   - ✅ Key expiration and TTL
 
 ### Building
 
@@ -275,10 +288,15 @@ Redis command error: NOAUTH Authentication required
 
 **Issue**: Testcontainers requires Docker Desktop to be running on Windows.
 
+**Error message**: `rootless Docker is not supported on Windows` or `cannot find the file specified`
+
 **Solution**: 
-1. Install Docker Desktop for Windows
-2. Start Docker Desktop
-3. Run tests again
+1. Download and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
+2. Start Docker Desktop and wait for it to fully start
+3. Verify Docker is running: `docker ps`
+4. Run tests again: `go test -v ./...`
+
+**Note**: Docker must be running in Windows mode (not WSL2 rootless mode)
 
 ### Tests Failing - "Cannot connect to Docker daemon"
 

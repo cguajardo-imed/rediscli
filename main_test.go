@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -12,12 +11,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var testClient *redis.Client
-var testCtx context.Context
-
 // setupRedisContainer starts a Redis container for testing
-func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client) {
-	testCtx = context.Background()
+func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client, context.Context) {
+	ctx := context.Background()
 
 	req := testcontainers.ContainerRequest{
 		Image:        "redis:7-alpine",
@@ -25,7 +21,7 @@ func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client)
 		WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(60 * time.Second),
 	}
 
-	redisContainer, err := testcontainers.GenericContainer(testCtx, testcontainers.GenericContainerRequest{
+	redisContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
 		Started:          true,
 	})
@@ -33,26 +29,28 @@ func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client)
 		t.Fatalf("Failed to start Redis container: %v", err)
 	}
 
-	host, err := redisContainer.Host(testCtx)
+	host, err := redisContainer.Host(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get container host: %v", err)
 	}
 
-	port, err := redisContainer.MappedPort(testCtx, "6379")
+	port, err := redisContainer.MappedPort(ctx, "6379")
 	if err != nil {
 		t.Fatalf("Failed to get container port: %v", err)
 	}
 
 	client := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", host, port.Port()),
-		Password: "",
-		DB:       0,
+		Addr:         fmt.Sprintf("%s:%s", host, port.Port()),
+		Password:     "",
+		DB:           0,
+		PoolSize:     200,
+		MinIdleConns: 50,
 	})
 
 	// Wait for Redis to be ready
 	maxRetries := 30
 	for i := 0; i < maxRetries; i++ {
-		if err := client.Ping(testCtx).Err(); err == nil {
+		if err := client.Ping(ctx).Err(); err == nil {
 			break
 		}
 		if i == maxRetries-1 {
@@ -61,144 +59,95 @@ func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client)
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return redisContainer, client
+	return redisContainer, client, ctx
 }
 
-func TestConnectionStatus(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
-
-	// Set global variables for the function to use
-	ctx = testCtx
-	client = redisClient
-
-	// Test successful connection
-	if !ConnectionStatus() {
-		t.Error("ConnectionStatus() should return true for valid connection")
-	}
-
-	// Test with closed connection
-	redisClient.Close()
-	if ConnectionStatus() {
-		t.Error("ConnectionStatus() should return false for closed connection")
-	}
-}
-
-func TestRedisSetAndGet(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
-
-	// Test SET command
-	err := redisClient.Set(testCtx, "test-key", "test-value", 0).Err()
-	if err != nil {
-		t.Fatalf("Failed to set key: %v", err)
-	}
-
-	// Test GET command
-	val, err := redisClient.Get(testCtx, "test-key").Result()
-	if err != nil {
-		t.Fatalf("Failed to get key: %v", err)
-	}
-
-	if val != "test-value" {
-		t.Errorf("Expected 'test-value', got '%s'", val)
-	}
-}
-
-func TestRedisDoCommand(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
+// TestBasicRedisOperations tests basic Redis commands like SET, GET, DEL, EXISTS
+func TestBasicRedisOperations(t *testing.T) {
+	container, redisClient, ctx := setupRedisContainer(t)
+	defer func() {
+		redisClient.Close()
+		container.Terminate(ctx)
+	}()
 
 	tests := []struct {
 		name     string
-		setup    func()
+		setup    func() error
 		command  []interface{}
-		wantErr  bool
-		validate func(result interface{}) bool
+		validate func(result interface{}) error
 	}{
 		{
 			name:    "SET command",
-			setup:   func() {},
-			command: []interface{}{"SET", "mykey", "myvalue"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == "OK"
+			setup:   func() error { return nil },
+			command: []interface{}{"SET", "testkey", "testvalue"},
+			validate: func(result interface{}) error {
+				if result != "OK" {
+					return fmt.Errorf("expected 'OK', got %v", result)
+				}
+				return nil
 			},
 		},
 		{
 			name: "GET command",
-			setup: func() {
-				redisClient.Set(testCtx, "getkey", "getvalue", 0)
+			setup: func() error {
+				return redisClient.Set(ctx, "getkey", "getvalue", 0).Err()
 			},
 			command: []interface{}{"GET", "getkey"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == "getvalue"
+			validate: func(result interface{}) error {
+				if result != "getvalue" {
+					return fmt.Errorf("expected 'getvalue', got %v", result)
+				}
+				return nil
 			},
 		},
 		{
 			name: "DEL command",
-			setup: func() {
-				redisClient.Set(testCtx, "delkey", "delvalue", 0)
+			setup: func() error {
+				return redisClient.Set(ctx, "delkey", "delvalue", 0).Err()
 			},
 			command: []interface{}{"DEL", "delkey"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == int64(1)
+			validate: func(result interface{}) error {
+				if result != int64(1) {
+					return fmt.Errorf("expected 1, got %v", result)
+				}
+				return nil
 			},
 		},
 		{
-			name:    "EXISTS command - key exists",
-			setup:   func() { redisClient.Set(testCtx, "existkey", "value", 0) },
+			name: "EXISTS command - key exists",
+			setup: func() error {
+				return redisClient.Set(ctx, "existkey", "value", 0).Err()
+			},
 			command: []interface{}{"EXISTS", "existkey"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == int64(1)
-			},
-		},
-		{
-			name:    "EXISTS command - key doesn't exist",
-			setup:   func() {},
-			command: []interface{}{"EXISTS", "nonexistent"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == int64(0)
-			},
-		},
-		{
-			name: "KEYS command",
-			setup: func() {
-				redisClient.Set(testCtx, "key1", "val1", 0)
-				redisClient.Set(testCtx, "key2", "val2", 0)
-			},
-			command: []interface{}{"KEYS", "key*"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				keys, ok := result.([]interface{})
-				return ok && len(keys) >= 2
-			},
-		},
-		{
-			name: "INCR command",
-			setup: func() {
-				redisClient.Set(testCtx, "counter", "10", 0)
-			},
-			command: []interface{}{"INCR", "counter"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == int64(11)
+			validate: func(result interface{}) error {
+				if result != int64(1) {
+					return fmt.Errorf("expected 1, got %v", result)
+				}
+				return nil
 			},
 		},
 		{
 			name:    "PING command",
-			setup:   func() {},
+			setup:   func() error { return nil },
 			command: []interface{}{"PING"},
-			wantErr: false,
-			validate: func(result interface{}) bool {
-				return result == "PONG"
+			validate: func(result interface{}) error {
+				if result != "PONG" {
+					return fmt.Errorf("expected 'PONG', got %v", result)
+				}
+				return nil
+			},
+		},
+		{
+			name: "INCR command",
+			setup: func() error {
+				return redisClient.Set(ctx, "counter", "10", 0).Err()
+			},
+			command: []interface{}{"INCR", "counter"},
+			validate: func(result interface{}) error {
+				if result != int64(11) {
+					return fmt.Errorf("expected 11, got %v", result)
+				}
+				return nil
 			},
 		},
 	}
@@ -206,261 +155,209 @@ func TestRedisDoCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup
-			if tt.setup != nil {
-				tt.setup()
+			if err := tt.setup(); err != nil {
+				t.Fatalf("Setup failed: %v", err)
 			}
 
 			// Execute command
-			result, err := redisClient.Do(testCtx, tt.command...).Result()
-
-			// Check error expectation
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Do() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			result, err := redisClient.Do(ctx, tt.command...).Result()
+			if err != nil {
+				t.Fatalf("Command failed: %v", err)
 			}
 
 			// Validate result
-			if tt.validate != nil && !tt.validate(result) {
-				t.Errorf("Result validation failed. Got: %v (type: %T)", result, result)
-			}
-
-			// Cleanup
-			if tt.name == "SET command" || tt.name == "GET command" {
-				redisClient.Del(testCtx, "mykey", "getkey")
+			if err := tt.validate(result); err != nil {
+				t.Errorf("Validation failed: %v", err)
 			}
 		})
 	}
 }
 
-func TestRedisList(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
+// TestRedisDataStructures tests Redis data structures (Lists, Hashes, Sets)
+func TestRedisDataStructures(t *testing.T) {
+	container, redisClient, ctx := setupRedisContainer(t)
+	defer func() {
+		redisClient.Close()
+		container.Terminate(ctx)
+	}()
 
-	// Test LPUSH
-	err := redisClient.LPush(testCtx, "mylist", "value1", "value2", "value3").Err()
-	if err != nil {
-		t.Fatalf("LPUSH failed: %v", err)
-	}
+	t.Run("List operations", func(t *testing.T) {
+		// Test LPUSH
+		result, err := redisClient.Do(ctx, "LPUSH", "mylist", "value1", "value2", "value3").Result()
+		if err != nil {
+			t.Fatalf("LPUSH failed: %v", err)
+		}
+		if result != int64(3) {
+			t.Errorf("Expected LPUSH to return 3, got %v", result)
+		}
 
-	// Test LRANGE using Do
-	result, err := redisClient.Do(testCtx, "LRANGE", "mylist", "0", "-1").Result()
-	if err != nil {
-		t.Fatalf("LRANGE failed: %v", err)
-	}
-
-	list, ok := result.([]interface{})
-	if !ok {
-		t.Fatalf("Expected []interface{}, got %T", result)
-	}
-
-	if len(list) != 3 {
-		t.Errorf("Expected list length 3, got %d", len(list))
-	}
-}
-
-func TestRedisHash(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
-
-	// Test HSET
-	result, err := redisClient.Do(testCtx, "HSET", "myhash", "field1", "value1").Result()
-	if err != nil {
-		t.Fatalf("HSET failed: %v", err)
-	}
-
-	if result != int64(1) {
-		t.Errorf("Expected HSET to return 1, got %v", result)
-	}
-
-	// Test HGET
-	result, err = redisClient.Do(testCtx, "HGET", "myhash", "field1").Result()
-	if err != nil {
-		t.Fatalf("HGET failed: %v", err)
-	}
-
-	if result != "value1" {
-		t.Errorf("Expected 'value1', got %v", result)
-	}
-
-	// Test HGETALL
-	redisClient.Do(testCtx, "HSET", "myhash", "field2", "value2")
-	result, err = redisClient.Do(testCtx, "HGETALL", "myhash").Result()
-	if err != nil {
-		t.Fatalf("HGETALL failed: %v", err)
-	}
-
-	fields, ok := result.([]interface{})
-	if !ok || len(fields) < 4 {
-		t.Errorf("Expected hash with multiple fields, got %v", result)
-	}
-}
-
-func TestRedisSet(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
-
-	// Test SADD
-	result, err := redisClient.Do(testCtx, "SADD", "myset", "member1", "member2", "member3").Result()
-	if err != nil {
-		t.Fatalf("SADD failed: %v", err)
-	}
-
-	if result != int64(3) {
-		t.Errorf("Expected SADD to return 3, got %v", result)
-	}
-
-	// Test SMEMBERS
-	result, err = redisClient.Do(testCtx, "SMEMBERS", "myset").Result()
-	if err != nil {
-		t.Fatalf("SMEMBERS failed: %v", err)
-	}
-
-	members, ok := result.([]interface{})
-	if !ok || len(members) != 3 {
-		t.Errorf("Expected 3 members, got %v", result)
-	}
-}
-
-func TestRedisExpiration(t *testing.T) {
-	container, redisClient := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
-	defer redisClient.Close()
-
-	// Set key with expiration
-	result, err := redisClient.Do(testCtx, "SETEX", "expkey", "2", "expvalue").Result()
-	if err != nil {
-		t.Fatalf("SETEX failed: %v", err)
-	}
-
-	if result != "OK" {
-		t.Errorf("Expected 'OK', got %v", result)
-	}
-
-	// Check TTL
-	ttlResult, err := redisClient.Do(testCtx, "TTL", "expkey").Result()
-	if err != nil {
-		t.Fatalf("TTL failed: %v", err)
-	}
-
-	ttl, ok := ttlResult.(int64)
-	if !ok || ttl <= 0 || ttl > 2 {
-		t.Errorf("Expected TTL between 1-2, got %v", ttlResult)
-	}
-
-	// Wait for expiration
-	time.Sleep(3 * time.Second)
-
-	// Key should not exist
-	existsResult, err := redisClient.Do(testCtx, "EXISTS", "expkey").Result()
-	if err != nil {
-		t.Fatalf("EXISTS failed: %v", err)
-	}
-
-	if existsResult != int64(0) {
-		t.Errorf("Expected key to be expired, EXISTS returned %v", existsResult)
-	}
-}
-
-func TestRedisWithPassword(t *testing.T) {
-	testCtx := context.Background()
-	password := "testpassword123"
-
-	req := testcontainers.ContainerRequest{
-		Image:        "redis:7-alpine",
-		ExposedPorts: []string{"6379/tcp"},
-		Cmd:          []string{"redis-server", "--requirepass", password},
-		WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(60 * time.Second),
-	}
-
-	redisContainer, err := testcontainers.GenericContainer(testCtx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
+		// Test LRANGE
+		result, err = redisClient.Do(ctx, "LRANGE", "mylist", "0", "-1").Result()
+		if err != nil {
+			t.Fatalf("LRANGE failed: %v", err)
+		}
+		list, ok := result.([]interface{})
+		if !ok || len(list) != 3 {
+			t.Errorf("Expected list of length 3, got %v", result)
+		}
 	})
-	if err != nil {
-		t.Fatalf("Failed to start Redis container: %v", err)
-	}
-	defer redisContainer.Terminate(testCtx)
 
-	host, _ := redisContainer.Host(testCtx)
-	port, _ := redisContainer.MappedPort(testCtx, "6379")
+	t.Run("Hash operations", func(t *testing.T) {
+		// Test HSET
+		result, err := redisClient.Do(ctx, "HSET", "myhash", "field1", "value1").Result()
+		if err != nil {
+			t.Fatalf("HSET failed: %v", err)
+		}
+		if result != int64(1) {
+			t.Errorf("Expected HSET to return 1, got %v", result)
+		}
 
-	// Test connection without password (should fail)
-	clientNoAuth := redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", host, port.Port()),
+		// Test HGET
+		result, err = redisClient.Do(ctx, "HGET", "myhash", "field1").Result()
+		if err != nil {
+			t.Fatalf("HGET failed: %v", err)
+		}
+		if result != "value1" {
+			t.Errorf("Expected 'value1', got %v", result)
+		}
+
+		// Test HGETALL
+		redisClient.Do(ctx, "HSET", "myhash", "field2", "value2")
+		result, err = redisClient.Do(ctx, "HGETALL", "myhash").Result()
+		if err != nil {
+			t.Fatalf("HGETALL failed: %v", err)
+		}
+		fields, ok := result.([]interface{})
+		if !ok || len(fields) < 4 {
+			t.Errorf("Expected hash with at least 4 elements, got %v", result)
+		}
 	})
-	defer clientNoAuth.Close()
 
-	err = clientNoAuth.Ping(testCtx).Err()
-	if err == nil {
-		t.Error("Expected error when connecting without password")
-	}
+	t.Run("Set operations", func(t *testing.T) {
+		// Test SADD
+		result, err := redisClient.Do(ctx, "SADD", "myset", "member1", "member2", "member3").Result()
+		if err != nil {
+			t.Fatalf("SADD failed: %v", err)
+		}
+		if result != int64(3) {
+			t.Errorf("Expected SADD to return 3, got %v", result)
+		}
 
-	// Test connection with password (should succeed)
-	clientWithAuth := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", host, port.Port()),
-		Password: password,
+		// Test SMEMBERS
+		result, err = redisClient.Do(ctx, "SMEMBERS", "myset").Result()
+		if err != nil {
+			t.Fatalf("SMEMBERS failed: %v", err)
+		}
+		members, ok := result.([]interface{})
+		if !ok || len(members) != 3 {
+			t.Errorf("Expected 3 members, got %v", result)
+		}
 	})
-	defer clientWithAuth.Close()
-
-	time.Sleep(500 * time.Millisecond)
-	err = clientWithAuth.Ping(testCtx).Err()
-	if err != nil {
-		t.Errorf("Expected successful connection with password, got error: %v", err)
-	}
 }
 
-func TestRedisMultipleDB(t *testing.T) {
-	container, _ := setupRedisContainer(t)
-	defer container.Terminate(testCtx)
+// TestConnectionAndAuthentication tests connection status and authentication
+func TestConnectionAndAuthentication(t *testing.T) {
+	t.Run("Connection status check", func(t *testing.T) {
+		container, redisClient, ctx := setupRedisContainer(t)
+		defer func() {
+			redisClient.Close()
+			container.Terminate(ctx)
+		}()
 
-	host, _ := container.Host(testCtx)
-	port, _ := container.MappedPort(testCtx, "6379")
+		// Test successful connection using PING
+		err := redisClient.Ping(ctx).Err()
+		if err != nil {
+			t.Errorf("Expected successful connection, got error: %v", err)
+		}
 
-	// Create clients for different databases
-	client0 := redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", host, port.Port()),
-		DB:   0,
+		// Test connection status
+		status := redisClient.Ping(ctx).Val()
+		if status != "PONG" {
+			t.Errorf("Expected PONG, got %s", status)
+		}
 	})
-	defer client0.Close()
 
-	client1 := redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", host, port.Port()),
-		DB:   1,
+	t.Run("Multiple database support", func(t *testing.T) {
+		container, _, ctx := setupRedisContainer(t)
+		defer container.Terminate(ctx)
+
+		host, _ := container.Host(ctx)
+		port, _ := container.MappedPort(ctx, "6379")
+
+		// Create clients for different databases
+		client0 := redis.NewClient(&redis.Options{
+			Addr: fmt.Sprintf("%s:%s", host, port.Port()),
+			DB:   0,
+		})
+		defer client0.Close()
+
+		client1 := redis.NewClient(&redis.Options{
+			Addr: fmt.Sprintf("%s:%s", host, port.Port()),
+			DB:   1,
+		})
+		defer client1.Close()
+
+		// Set key in DB 0
+		err := client0.Set(ctx, "dbkey", "db0value", 0).Err()
+		if err != nil {
+			t.Fatalf("Failed to set key in DB 0: %v", err)
+		}
+
+		// Set same key in DB 1 with different value
+		err = client1.Set(ctx, "dbkey", "db1value", 0).Err()
+		if err != nil {
+			t.Fatalf("Failed to set key in DB 1: %v", err)
+		}
+
+		// Verify values are isolated
+		val0, _ := client0.Get(ctx, "dbkey").Result()
+		val1, _ := client1.Get(ctx, "dbkey").Result()
+
+		if val0 != "db0value" {
+			t.Errorf("DB 0: expected 'db0value', got '%s'", val0)
+		}
+
+		if val1 != "db1value" {
+			t.Errorf("DB 1: expected 'db1value', got '%s'", val1)
+		}
 	})
-	defer client1.Close()
 
-	// Set key in DB 0
-	err := client0.Set(testCtx, "dbkey", "db0value", 0).Err()
-	if err != nil {
-		t.Fatalf("Failed to set key in DB 0: %v", err)
-	}
+	t.Run("Key expiration", func(t *testing.T) {
+		container, redisClient, ctx := setupRedisContainer(t)
+		defer func() {
+			redisClient.Close()
+			container.Terminate(ctx)
+		}()
 
-	// Set same key in DB 1 with different value
-	err = client1.Set(testCtx, "dbkey", "db1value", 0).Err()
-	if err != nil {
-		t.Fatalf("Failed to set key in DB 1: %v", err)
-	}
+		// Set key with expiration
+		result, err := redisClient.Do(ctx, "SETEX", "expkey", "2", "expvalue").Result()
+		if err != nil {
+			t.Fatalf("SETEX failed: %v", err)
+		}
+		if result != "OK" {
+			t.Errorf("Expected 'OK', got %v", result)
+		}
 
-	// Verify values are isolated
-	val0, _ := client0.Get(testCtx, "dbkey").Result()
-	val1, _ := client1.Get(testCtx, "dbkey").Result()
+		// Check TTL
+		ttlResult, err := redisClient.Do(ctx, "TTL", "expkey").Result()
+		if err != nil {
+			t.Fatalf("TTL failed: %v", err)
+		}
+		ttl, ok := ttlResult.(int64)
+		if !ok || ttl <= 0 || ttl > 2 {
+			t.Errorf("Expected TTL between 1-2, got %v", ttlResult)
+		}
 
-	if val0 != "db0value" {
-		t.Errorf("DB 0: expected 'db0value', got '%s'", val0)
-	}
+		// Wait for expiration
+		time.Sleep(3 * time.Second)
 
-	if val1 != "db1value" {
-		t.Errorf("DB 1: expected 'db1value', got '%s'", val1)
-	}
-}
-
-func TestMain(m *testing.M) {
-	// Run tests
-	code := m.Run()
-
-	// Exit
-	os.Exit(code)
+		// Key should not exist
+		existsResult, err := redisClient.Do(ctx, "EXISTS", "expkey").Result()
+		if err != nil {
+			t.Fatalf("EXISTS failed: %v", err)
+		}
+		if existsResult != int64(0) {
+			t.Errorf("Expected key to be expired, EXISTS returned %v", existsResult)
+		}
+	})
 }

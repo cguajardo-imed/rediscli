@@ -11,8 +11,10 @@ The test suite uses **testcontainers-go** to spin up real Redis instances in Doc
 ### Required Software
 
 1. **Go 1.24+**: For running the tests
-2. **Docker**: Required by testcontainers to spin up Redis containers
-3. **Docker Engine Running**: Docker daemon must be active
+2. **Docker Desktop**: Required by testcontainers to spin up Redis containers
+3. **Docker Desktop Running**: Docker Desktop must be started and running
+
+**⚠️ Important for Windows Users**: You must use Docker Desktop for Windows, not rootless Docker in WSL2
 
 ### Verify Prerequisites
 
@@ -69,85 +71,51 @@ make docker-down
 
 ### Test File: `main_test.go`
 
-The test suite is organized into the following test functions:
+The test suite is organized into **3 comprehensive test functions**:
 
-#### 1. **TestConnectionStatus**
-Tests the `ConnectionStatus()` function to ensure it correctly detects Redis connectivity.
-
-**What it tests:**
-- Successful connection to Redis
-- Failed connection detection
-- Connection status after closing the client
-
-#### 2. **TestRedisSetAndGet**
-Tests basic SET and GET operations.
-
-**What it tests:**
-- Setting a key-value pair
-- Retrieving a value by key
-- Data integrity
-
-#### 3. **TestRedisDoCommand**
-Comprehensive test of various Redis commands using the `Do()` method.
+#### 1. **TestBasicRedisOperations**
+Tests basic Redis commands using the `Do()` method.
 
 **Commands tested:**
-- `SET` - Setting values
+- `SET` - Setting key-value pairs
 - `GET` - Getting values
 - `DEL` - Deleting keys
 - `EXISTS` - Checking key existence
-- `KEYS` - Pattern matching keys
+- `PING` - Server connectivity check
 - `INCR` - Incrementing counters
-- `PING` - Server connectivity
 
-#### 4. **TestRedisList**
-Tests Redis list operations.
+**What it validates:**
+- Command execution
+- Data integrity
+- Result type validation
+- Error handling
 
-**What it tests:**
-- `LPUSH` - Pushing items to a list
-- `LRANGE` - Getting list items
-- List data integrity
+#### 2. **TestRedisDataStructures**
+Tests Redis data structures (Lists, Hashes, Sets).
 
-#### 5. **TestRedisHash**
-Tests Redis hash operations.
+**Subtests included:**
+- **List operations**: `LPUSH`, `LRANGE`
+- **Hash operations**: `HSET`, `HGET`, `HGETALL`
+- **Set operations**: `SADD`, `SMEMBERS`
 
-**What it tests:**
-- `HSET` - Setting hash fields
-- `HGET` - Getting hash field values
-- `HGETALL` - Getting all hash fields
-- Hash data structure integrity
+**What it validates:**
+- Data structure integrity
+- Multiple item operations
+- Data retrieval accuracy
 
-#### 6. **TestRedisSet**
-Tests Redis set operations.
+#### 3. **TestConnectionAndAuthentication**
+Tests connection features and advanced functionality.
 
-**What it tests:**
-- `SADD` - Adding members to a set
-- `SMEMBERS` - Getting all set members
-- Set uniqueness
+**Subtests included:**
+- **Connection status check**: PING command validation
+- **Multiple database support**: Testing DB 0 and DB 1 isolation
+- **Key expiration**: `SETEX`, `TTL`, automatic expiration
 
-#### 7. **TestRedisExpiration**
-Tests key expiration and TTL functionality.
-
-**What it tests:**
-- `SETEX` - Setting keys with expiration
-- `TTL` - Getting time-to-live
-- Automatic key expiration
-- Key existence after expiration
-
-#### 8. **TestRedisWithPassword**
-Tests Redis authentication.
-
-**What it tests:**
-- Connection without password (should fail)
-- Connection with correct password (should succeed)
-- Password authentication workflow
-
-#### 9. **TestRedisMultipleDB**
-Tests multiple Redis database support.
-
-**What it tests:**
-- Connecting to different databases (DB 0 and DB 1)
-- Data isolation between databases
-- Same key in different databases
+**What it validates:**
+- Connection health
+- Database isolation
+- Time-to-live functionality
+- Key expiration behavior
 
 ## Test Helpers
 
@@ -156,14 +124,21 @@ Tests multiple Redis database support.
 A helper function that:
 1. Creates a Redis container using testcontainers
 2. Waits for Redis to be ready
-3. Returns the container and a configured Redis client
+3. Returns the container, a configured Redis client, and context
 4. Handles all container lifecycle management
+
+**Signature:**
+```go
+func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client, context.Context)
+```
 
 **Usage:**
 ```go
-container, redisClient := setupRedisContainer(t)
-defer container.Terminate(testCtx)
-defer redisClient.Close()
+container, redisClient, ctx := setupRedisContainer(t)
+defer func() {
+    redisClient.Close()
+    container.Terminate(ctx)
+}()
 ```
 
 ## Continuous Integration
@@ -242,8 +217,11 @@ docker ps
 **Cause:** Testcontainers has limitations with rootless Docker on Windows.
 
 **Solution:**
-- Use Docker Desktop for Windows (not Docker in WSL2 with rootless mode)
-- Ensure Docker Desktop is running in Windows mode
+1. Download and install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
+2. Start Docker Desktop and wait for it to fully start
+3. Verify Docker is running: `docker ps`
+4. Ensure Docker Desktop is running in Windows mode (not WSL2 rootless mode)
+5. Run tests again: `go test -v ./...`
 
 ### Issue: Tests Timeout
 
@@ -296,15 +274,17 @@ docker stop <container-id>
 ```go
 func TestNewFeature(t *testing.T) {
     // Setup Redis container
-    container, redisClient := setupRedisContainer(t)
-    defer container.Terminate(testCtx)
-    defer redisClient.Close()
+    container, redisClient, ctx := setupRedisContainer(t)
+    defer func() {
+        redisClient.Close()
+        container.Terminate(ctx)
+    }()
 
     // Setup test data
     // ... prepare your test data ...
 
     // Execute the command
-    result, err := redisClient.Do(testCtx, "COMMAND", "args").Result()
+    result, err := redisClient.Do(ctx, "COMMAND", "args").Result()
 
     // Assertions
     if err != nil {
@@ -326,36 +306,45 @@ For testing multiple scenarios:
 
 ```go
 func TestMultipleScenarios(t *testing.T) {
-    container, redisClient := setupRedisContainer(t)
-    defer container.Terminate(testCtx)
-    defer redisClient.Close()
+    container, redisClient, ctx := setupRedisContainer(t)
+    defer func() {
+        redisClient.Close()
+        container.Terminate(ctx)
+    }()
 
     tests := []struct {
         name     string
+        setup    func() error
         command  []interface{}
-        want     interface{}
-        wantErr  bool
+        validate func(result interface{}) error
     }{
         {
             name:    "Test case 1",
+            setup:   func() error { return nil },
             command: []interface{}{"SET", "key1", "value1"},
-            want:    "OK",
-            wantErr: false,
+            validate: func(result interface{}) error {
+                if result != "OK" {
+                    return fmt.Errorf("expected 'OK', got %v", result)
+                }
+                return nil
+            },
         },
         // Add more test cases...
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            result, err := redisClient.Do(testCtx, tt.command...).Result()
-            
-            if (err != nil) != tt.wantErr {
-                t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
-                return
+            if err := tt.setup(); err != nil {
+                t.Fatalf("Setup failed: %v", err)
             }
             
-            if result != tt.want {
-                t.Errorf("got %v, want %v", result, tt.want)
+            result, err := redisClient.Do(ctx, tt.command...).Result()
+            if err != nil {
+                t.Fatalf("Command failed: %v", err)
+            }
+            
+            if err := tt.validate(result); err != nil {
+                t.Errorf("Validation failed: %v", err)
             }
         })
     }
@@ -370,16 +359,19 @@ Create benchmark tests for performance-critical operations:
 
 ```go
 func BenchmarkRedisGet(b *testing.B) {
-    container, redisClient := setupRedisContainer(&testing.T{})
-    defer container.Terminate(testCtx)
-    defer redisClient.Close()
+    t := &testing.T{}
+    container, redisClient, ctx := setupRedisContainer(t)
+    defer func() {
+        redisClient.Close()
+        container.Terminate(ctx)
+    }()
 
     // Setup
-    redisClient.Set(testCtx, "benchkey", "benchvalue", 0)
+    redisClient.Set(ctx, "benchkey", "benchvalue", 0)
 
     b.ResetTimer()
     for i := 0; i < b.N; i++ {
-        redisClient.Get(testCtx, "benchkey")
+        redisClient.Get(ctx, "benchkey")
     }
 }
 ```

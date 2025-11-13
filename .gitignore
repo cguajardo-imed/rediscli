@@ -10,6 +10,10 @@ rediscli-*
 # Test binary, built with `go test -c`
 *.test
 
+# Docker check scripts (keep in repo but mark as executable)
+# check-docker.sh
+# check-docker.bat
+
 # Output of the go coverage tool
 *.out
 coverage.txt
