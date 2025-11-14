@@ -2,16 +2,72 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  tag:
+    name: Create Tag
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.create_tag.outputs.new_tag }}
+      tag_created: ${{ steps.create_tag.outputs.tag_created }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            echo "latest_tag=v0.0.0" >> $GITHUB_OUTPUT
+          else
+            echo "latest_tag=$latest_tag" >> $GITHUB_OUTPUT
+          fi
+          echo "Latest tag: $latest_tag"
+
+      - name: Increment version
+        id: increment
+        run: |
+          latest_tag="${{ steps.get_tag.outputs.latest_tag }}"
+          version="${latest_tag#v}"
+
+          major=$(echo "$version" | cut -d. -f1)
+          minor=$(echo "$version" | cut -d. -f2)
+          patch=$(echo "$version" | cut -d. -f3)
+
+          # Increment patch version
+          patch=$((patch + 1))
+
+          new_tag="v${major}.${minor}.${patch}"
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+          echo "New tag: $new_tag"
+
+      - name: Create and push tag
+        id: create_tag
+        run: |
+          new_tag="${{ steps.increment.outputs.new_tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$new_tag" -m "Auto-release $new_tag"
+          git push origin "$new_tag"
+
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+          echo "tag_created=true" >> $GITHUB_OUTPUT
+          echo "Tag $new_tag created and pushed"
+
   build:
     name: Build executables
+    needs: tag
+    if: needs.tag.outputs.tag_created == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -35,11 +91,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.new_tag }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
       - name: Build executable
         env:
@@ -47,22 +105,34 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o ${{ matrix.output }} .
+          go build -ldflags="-s -w -X main.Version=${{ needs.tag.outputs.new_tag }}" -o ${{ matrix.output }} .
+
+      - name: Create checksums
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
+          else
+            sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.output }}
-          path: ${{ matrix.output }}
+          path: |
+            ${{ matrix.output }}
+            ${{ matrix.output }}.sha256
           retention-days: 1
 
   release:
     name: Create Release
-    needs: build
+    needs: [tag, build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.new_tag }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -72,12 +142,35 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R ./artifacts
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find ./artifacts -type f -exec cp {} ./release/ \;
+          ls -lh ./release
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: ./artifacts/**/*
+          tag_name: ${{ needs.tag.outputs.new_tag }}
+          name: Release ${{ needs.tag.outputs.new_tag }}
+          files: ./release/*
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            ## 🚀 Release ${{ needs.tag.outputs.new_tag }}
+
+            Auto-generated release with built executables for multiple platforms.
+
+            ### 📦 Available Binaries:
+            - **Linux** (amd64, arm64)
+            - **Windows** (amd64)
+            - **macOS** (amd64, arm64)
+
+            ### 📝 Installation:
+            Download the appropriate binary for your platform and add it to your PATH.
+
+            ### ✅ Checksum Verification:
+            SHA256 checksums are provided for each binary.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
