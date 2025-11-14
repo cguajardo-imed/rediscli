@@ -1,0 +1,8 @@
+services:
+  app:
+    image: public.ecr.aws/docker/library/golang:1.24
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: |
+      go test ./... -cover
