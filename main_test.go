@@ -361,3 +361,184 @@ func TestConnectionAndAuthentication(t *testing.T) {
 		}
 	})
 }
+
+// TestConfigValidation tests the configuration validation logic
+func TestConfigValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    *Config
+		expectErr bool
+	}{
+		{
+			name: "Valid config",
+			config: &Config{
+				Host:         "localhost",
+				Port:         "6379",
+				DB:           0,
+				PoolSize:     100,
+				MinIdleConns: 10,
+			},
+			expectErr: false,
+		},
+		{
+			name: "Empty host",
+			config: &Config{
+				Host:         "",
+				Port:         "6379",
+				DB:           0,
+				PoolSize:     100,
+				MinIdleConns: 10,
+			},
+			expectErr: true,
+		},
+		{
+			name: "Invalid DB - too high",
+			config: &Config{
+				Host:         "localhost",
+				Port:         "6379",
+				DB:           16,
+				PoolSize:     100,
+				MinIdleConns: 10,
+			},
+			expectErr: true,
+		},
+		{
+			name: "Invalid DB - negative",
+			config: &Config{
+				Host:         "localhost",
+				Port:         "6379",
+				DB:           -1,
+				PoolSize:     100,
+				MinIdleConns: 10,
+			},
+			expectErr: true,
+		},
+		{
+			name: "Invalid pool size",
+			config: &Config{
+				Host:         "localhost",
+				Port:         "6379",
+				DB:           0,
+				PoolSize:     0,
+				MinIdleConns: 10,
+			},
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.expectErr && err == nil {
+				t.Errorf("Expected error but got none")
+			}
+			if !tt.expectErr && err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+		})
+	}
+}
+
+// Benchmark tests
+func BenchmarkRedisSet(b *testing.B) {
+	container, redisClient, ctx := setupRedisContainerForBench(b)
+	defer func() {
+		redisClient.Close()
+		container.Terminate(ctx)
+	}()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		key := fmt.Sprintf("benchkey:%d", i)
+		redisClient.Set(ctx, key, "benchvalue", 0)
+	}
+}
+
+func BenchmarkRedisGet(b *testing.B) {
+	container, redisClient, ctx := setupRedisContainerForBench(b)
+	defer func() {
+		redisClient.Close()
+		container.Terminate(ctx)
+	}()
+
+	// Pre-populate data
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("benchkey:%d", i)
+		redisClient.Set(ctx, key, "benchvalue", 0)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		key := fmt.Sprintf("benchkey:%d", i%1000)
+		redisClient.Get(ctx, key)
+	}
+}
+
+func BenchmarkRedisPipeline(b *testing.B) {
+	container, redisClient, ctx := setupRedisContainerForBench(b)
+	defer func() {
+		redisClient.Close()
+		container.Terminate(ctx)
+	}()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pipe := redisClient.Pipeline()
+		for j := 0; j < 100; j++ {
+			key := fmt.Sprintf("pipekey:%d:%d", i, j)
+			pipe.Set(ctx, key, "pipevalue", 0)
+		}
+		pipe.Exec(ctx)
+	}
+}
+
+// Helper function for benchmarks
+func setupRedisContainerForBench(b *testing.B) (testcontainers.Container, *redis.Client, context.Context) {
+	ctx := context.Background()
+
+	req := testcontainers.ContainerRequest{
+		Image:        "redis:7-alpine",
+		ExposedPorts: []string{"6379/tcp"},
+		WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(60 * time.Second),
+	}
+
+	redisContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	if err != nil {
+		b.Fatalf("Failed to start Redis container: %v", err)
+	}
+
+	host, err := redisContainer.Host(ctx)
+	if err != nil {
+		b.Fatalf("Failed to get container host: %v", err)
+	}
+
+	port, err := redisContainer.MappedPort(ctx, "6379")
+	if err != nil {
+		b.Fatalf("Failed to get container port: %v", err)
+	}
+
+	client := redis.NewClient(&redis.Options{
+		Addr:         fmt.Sprintf("%s:%s", host, port.Port()),
+		Password:     "",
+		DB:           0,
+		PoolSize:     200,
+		MinIdleConns: 50,
+	})
+
+	// Wait for Redis to be ready
+	maxRetries := 30
+	for i := 0; i < maxRetries; i++ {
+		if err := client.Ping(ctx).Err(); err == nil {
+			break
+		}
+		if i == maxRetries-1 {
+			b.Fatalf("Redis container failed to become ready")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return redisContainer, client, ctx
+}

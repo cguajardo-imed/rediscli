@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
-	"strconv"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/joho/godotenv"
 	redis "github.com/redis/go-redis/v9"
 )
+
+// Version can be set at build time with -ldflags
+var Version = "dev"
 
 var (
 	ctx    context.Context
@@ -16,89 +19,127 @@ var (
 )
 
 func main() {
-	host := os.Getenv("REDIS_HOST")
-	password := os.Getenv("REDIS_PASSWORD")
-
-	port, ok := os.LookupEnv("REDIS_PORT")
-	if !ok {
-		port = "6379"
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		fmt.Println("Warning: .env file not found, using system environment variables")
 	}
 
-	dbStr, ok := os.LookupEnv("REDIS_DB")
-	if !ok {
-		dbStr = "0"
+	// Parse command-line arguments
+	args := os.Args[1:]
+
+	// Handle special flags
+	if len(args) > 0 {
+		switch args[0] {
+		case "-v", "--version":
+			fmt.Printf("rediscli version %s\n", Version)
+			return
+		case "-h", "--help":
+			printHelp()
+			return
+		}
 	}
 
-	db, err := strconv.Atoi(dbStr)
-	if err != nil {
-		log.Println("error", err.Error())
-		panic(err)
-	}
-
-	ctx = context.Background()
-	client = redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%s", host, port),
-		Password:     password,
-		DB:           db,
-		PoolSize:     200,
-		MinIdleConns: 50,
-	})
+	// Initialize Redis connection
+	initConnection()
 
 	// Check the connection
-	if !ConnectionStatus() {
-		log.Println("error", "Error trying to connect with Redis")
-		os.Exit(1)
-	}
-	log.Println("success", "Redis connection initialized on "+host+":"+port)
-
-	// Make sure query command is provided
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: rediscli <redis query>")
+	if !connectionStatus() {
+		fmt.Println("Error trying to connect with Redis")
 		os.Exit(1)
 	}
 
-	// Construct the command and arguments
-	cmdArgs := os.Args[1:]
-
-	// Convert string slice to interface slice
-	args := make([]any, len(cmdArgs))
-	for i, v := range cmdArgs {
-		args[i] = v
-	}
-
-	// Send command to Redis using Do
-	res, err := client.Do(ctx, args...).Result()
-	if err != nil {
-		fmt.Printf("Redis command error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Print the result based on its type for better output
-	switch val := res.(type) {
-	case string:
-		fmt.Println(val)
-	case []byte:
-		fmt.Println(string(val))
-	case []any:
-		for i, v := range val {
-			fmt.Printf("%d) %v\n", i+1, v)
+	// If command-line arguments are provided, run in CLI mode
+	if len(args) > 0 {
+		// Initialize logger for CLI mode
+		if err := InitLogger(false); err != nil {
+			fmt.Printf("Warning: Failed to initialize logger: %v\n", err)
 		}
-	default:
-		fmt.Printf("%v\n", val)
+		defer CloseLogger()
+
+		success := executeCommand(args)
+		if !success {
+			os.Exit(1)
+		}
+		return
 	}
+
+	// Initialize logger for TUI mode
+	if err := InitLogger(true); err != nil {
+		fmt.Printf("Warning: Failed to initialize logger: %v\n", err)
+	}
+	defer CloseLogger()
+
+	// Otherwise, run in TUI mode
+	initialModel := model{
+		Choice:         0,
+		Chosen:         false,
+		Frames:         0,
+		Progress:       0,
+		Loaded:         false,
+		Quitting:       false,
+		query:          "",
+		queryMode:      false,
+		queryResult:    "",
+		err:            nil,
+		iterationMode:  false,
+		delayMode:      false,
+		iterationInput: "",
+		delayInput:     "",
+		iterations:     0,
+		delay:          0,
+		currentIter:    0,
+		selectedAction: 0,
+		isProcessing:   false,
+		processingMsg:  "",
+		progressChan:   nil,
+	}
+
+	LogBanner("Redis CLI Starting in TUI Mode")
+
+	p := tea.NewProgram(initialModel)
+	if _, err := p.Run(); err != nil {
+		fmt.Println("could not start program:", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nSession log saved to: %s\n", GetLogFilePath())
 }
 
-func ConnectionStatus() bool {
-	redisPingResponse := client.Ping(ctx)
-	log.Println(client.Conn().String())
-	if redisPingResponse.Val() != "PONG" {
-		errorString, err := redisPingResponse.Result()
-		if err != nil {
-			log.Println("error", "Error trying to connect with Redis: "+err.Error())
-		} else {
-			log.Println("error", "Error trying to connect with Redis: "+errorString)
-		}
-		return false
-	}
-	return true
+func printHelp() {
+	help := `rediscli - Redis CLI Tool
+
+USAGE:
+    rediscli [command] [args...]
+    rediscli                    (starts interactive TUI mode)
+
+EXAMPLES:
+    rediscli PING
+    rediscli SET mykey "Hello Redis"
+    rediscli GET mykey
+    rediscli KEYS "*"
+    rediscli HSET user:1 name "John Doe"
+    rediscli LPUSH mylist item1 item2 item3
+
+ENVIRONMENT VARIABLES:
+    REDIS_HOST      Redis host (required)
+    REDIS_PORT      Redis port (default: 6379)
+    REDIS_PASSWORD  Redis password (optional)
+    REDIS_DB        Redis database number (default: 0)
+
+OPTIONS:
+    -h, --help      Show this help message
+    -v, --version   Show version information
+
+INTERACTIVE MODE:
+    When run without arguments, rediscli starts in interactive TUI mode
+    with the following options:
+    - Query Redis: Execute custom Redis commands
+    - Publish create: Create and publish a test record
+    - Publish create & delete: Create, publish, then delete a test record
+`
+	fmt.Print(help)
 }
+
+type (
+	errMsg error
+)
