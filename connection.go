@@ -178,9 +178,33 @@ func fakeRecord() (string, string) {
 }
 
 func fakeRecordWithIteration(iteration, total int) (string, string) {
-	key := "cl:0:demo::15130809-cd02-450a-909e-4f33d06d0397"
-	value := "15130809-cd02-450a-909e-4f33d06d0397"
-	fullContent := `{"criticality":"low","title":"test","messages":[{"uuid":"12d8254b-f557-49fc-a665-98762d268a5d","content":"\u003cp\u003esasdfsdf sdfsdf\u003c/p\u003e","plain_text":"sasdfsdf sdfsdf\n","created_at":"2026-02-12T14:29:44.896Z"}],"action":"","type":"alert","id":"15130809-cd02-450a-909e-4f33d06d0397","status":"pending","created_at":"2026-02-12T14:29:46Z"}`
+	return fakeRecordWithIterationAndParams("", "", "", iteration, total)
+}
+
+func fakeRecordWithIterationAndParams(placeCode, serviceName, customParams string, iteration, total int) (string, string) {
+	// COUNTRY_CODE:PLACE_CODE:SERVICE_NAME:CUSTOM_PARAMS:PARENT_MESSAGE_UUID
+
+	// Default values
+	if placeCode == "" {
+		placeCode = "0"
+	}
+	if serviceName == "" {
+		serviceName = "demo"
+	}
+
+	// UUIDs remain constant as per requirements
+	parentUUID := "15130809-cd02-450a-909e-4f33d06d0397"
+
+	// Build key: COUNTRY_CODE:PLACE_CODE:SERVICE_NAME:CUSTOM_PARAMS:PARENT_MESSAGE_UUID
+	key := fmt.Sprintf("cl:%s:%s:%s:%s", placeCode, serviceName, customParams, parentUUID)
+	value := parentUUID
+
+	messageContent := fmt.Sprintf("This is a test message %s", time.Now().Format(time.UnixDate))
+	createdAt := time.Now().Format("2006-01-02T15:04:05Z07:00")
+
+	fullContent := fmt.Sprintf(`{"criticality":"low","title":"test","messages":[{"uuid":"12d8254b-f557-49fc-a665-98762d268a5d","content":"\u003cp\u003e%s\u003c/p\u003e","plain_text":"%s\n","created_at":"2026-02-12T14:29:44.896Z"}],"action":"","type":"alert","id":"15130809-cd02-450a-909e-4f33d06d0397","status":"pending","created_at":"%s"}`,
+		messageContent, messageContent, createdAt,
+	)
 
 	duration := time.Minute
 	err := client.Set(ctx, key, value, duration).Err()
@@ -193,7 +217,7 @@ func fakeRecordWithIteration(iteration, total int) (string, string) {
 	} else {
 		LogRedisOperation("create", key, "", iteration, total)
 	}
-	return key, "demo"
+	return key, serviceName
 }
 
 func publishRecord(key, channel string) {

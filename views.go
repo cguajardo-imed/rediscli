@@ -13,28 +13,35 @@ import (
 )
 
 type model struct {
-	Choice         int
-	Chosen         bool
-	Frames         int
-	Progress       float64
-	Loaded         bool
-	Quitting       bool
-	query          string
-	queryMode      bool
-	queryResult    string
-	err            error
-	iterationMode  bool
-	delayMode      bool
-	iterationInput string
-	delayInput     string
-	iterations     int
-	delay          time.Duration
-	currentIter    int
-	selectedAction int // 1 for publish create, 2 for publish create & delete
-	isProcessing   bool
-	processingMsg  string
-	startTime      time.Time
-	progressChan   chan progressMsg
+	Choice            int
+	Chosen            bool
+	Frames            int
+	Progress          float64
+	Loaded            bool
+	Quitting          bool
+	query             string
+	queryMode         bool
+	queryResult       string
+	err               error
+	iterationMode     bool
+	delayMode         bool
+	iterationInput    string
+	delayInput        string
+	iterations        int
+	delay             time.Duration
+	currentIter       int
+	selectedAction    int // 1 for publish create, 2 for publish create & delete
+	isProcessing      bool
+	processingMsg     string
+	startTime         time.Time
+	progressChan      chan progressMsg
+	publishModeChoice int  // 0 for default, 1 for custom
+	publishModeSelect bool // true when selecting publish mode
+	customInputMode   int  // 0: place_code, 1: service_name, 2: custom_params
+	placeCodeInput    string
+	serviceNameInput  string
+	customParamsInput string
+	useCustom         bool
 }
 
 type frameMsg time.Time
@@ -90,6 +97,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.query = ""
 				m.Chosen = false
 				return m, nil
+			} else if m.customInputMode >= 0 && m.useCustom {
+				// Exit custom input and go back to mode selection
+				if m.customInputMode == 0 {
+					m.customInputMode = -1
+					m.placeCodeInput = ""
+					m.publishModeSelect = true
+					m.useCustom = false
+				} else if m.customInputMode == 1 {
+					m.customInputMode = 0
+					m.serviceNameInput = ""
+				} else if m.customInputMode == 2 {
+					m.customInputMode = 1
+					m.customParamsInput = ""
+				}
+				return m, nil
+			} else if m.publishModeSelect {
+				// Exit publish mode selection and return to main menu
+				m.publishModeSelect = false
+				m.publishModeChoice = 0
+				m.Chosen = false
+				return m, nil
 			} else if m.iterationMode {
 				// Exit iteration mode and return to main menu
 				m.iterationMode = false
@@ -129,6 +157,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			if m.publishModeSelect {
+				// User selected default or custom mode
+				if m.publishModeChoice == 0 {
+					// Default mode - proceed to iterations
+					m.publishModeSelect = false
+					m.useCustom = false
+					m.iterationMode = true
+					return m, nil
+				} else {
+					// Custom mode - ask for parameters
+					m.publishModeSelect = false
+					m.useCustom = true
+					m.customInputMode = 0 // Start with place_code
+					return m, nil
+				}
+			}
+
+			if m.useCustom && m.customInputMode >= 0 {
+				// Handle custom parameter inputs
+				if m.customInputMode == 0 {
+					// Place code entered (can be empty, defaults to "0")
+					m.customInputMode = 1 // Move to service_name
+					return m, nil
+				} else if m.customInputMode == 1 {
+					// Service name entered (mandatory)
+					if m.serviceNameInput == "" {
+						m.queryResult = "Error: Service name is mandatory"
+						m.customInputMode = -1
+						m.useCustom = false
+						m.Chosen = false
+						return m, nil
+					}
+					m.customInputMode = 2 // Move to custom_params
+					return m, nil
+				} else if m.customInputMode == 2 {
+					// Custom params entered (can be empty)
+					m.customInputMode = -1
+					m.useCustom = false
+					m.iterationMode = true
+					return m, nil
+				}
+			}
+
 			if m.iterationMode {
 				// Parse iteration count
 				if m.iterationInput == "" {
@@ -159,7 +230,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				// Execute once and return
 				m.iterationMode = false
-				return m, executeActionOnce(m.selectedAction)
+				return m, executeActionOnce(m.selectedAction, m.placeCodeInput, m.serviceNameInput, m.customParamsInput)
 			}
 
 			if m.delayMode {
@@ -191,7 +262,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.progressChan = make(chan progressMsg, 10)
 
 				// Start the operation
-				go performIterations(m.selectedAction, m.iterations, m.delay, m.progressChan)
+				go performIterations(m.selectedAction, m.iterations, m.delay, m.placeCodeInput, m.serviceNameInput, m.customParamsInput, m.progressChan)
 
 				// Start listening for progress
 				return m, waitForProgress(m.progressChan)
@@ -205,29 +276,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Chosen = false
 				return m, nil
 			case 1:
-				// Publish create - ask for iterations
+				// Publish create - ask for mode selection (default/custom)
 				m.selectedAction = 1
-				m.iterationMode = true
+				m.publishModeSelect = true
+				m.publishModeChoice = 0
 				m.Chosen = false
 				return m, nil
 			case 2:
-				// Publish create & delete - ask for iterations
+				// Publish create & delete - ask for mode selection (default/custom)
 				m.selectedAction = 2
-				m.iterationMode = true
+				m.publishModeSelect = true
+				m.publishModeChoice = 0
 				m.Chosen = false
 				return m, nil
 			}
 			return m, nil
 
 		case "up", "k":
-			if !m.Chosen && !m.queryMode && m.queryResult == "" {
+			if m.publishModeSelect {
+				if m.publishModeChoice > 0 {
+					m.publishModeChoice--
+				}
+			} else if !m.Chosen && !m.queryMode && m.queryResult == "" {
 				if m.Choice > 0 {
 					m.Choice--
 				}
 			}
 
 		case "down", "j":
-			if !m.Chosen && !m.queryMode && m.queryResult == "" {
+			if m.publishModeSelect {
+				if m.publishModeChoice < 1 {
+					m.publishModeChoice++
+				}
+			} else if !m.Chosen && !m.queryMode && m.queryResult == "" {
 				if m.Choice < 2 {
 					m.Choice++
 				}
@@ -236,6 +317,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "backspace":
 			if m.queryMode && len(m.query) > 0 {
 				m.query = m.query[:len(m.query)-1]
+			} else if m.useCustom && m.customInputMode == 0 && len(m.placeCodeInput) > 0 {
+				m.placeCodeInput = m.placeCodeInput[:len(m.placeCodeInput)-1]
+			} else if m.useCustom && m.customInputMode == 1 && len(m.serviceNameInput) > 0 {
+				m.serviceNameInput = m.serviceNameInput[:len(m.serviceNameInput)-1]
+			} else if m.useCustom && m.customInputMode == 2 && len(m.customParamsInput) > 0 {
+				m.customParamsInput = m.customParamsInput[:len(m.customParamsInput)-1]
 			} else if m.iterationMode && len(m.iterationInput) > 0 {
 				m.iterationInput = m.iterationInput[:len(m.iterationInput)-1]
 			} else if m.delayMode && len(m.delayInput) > 0 {
@@ -248,6 +335,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				key := msg.String()
 				if len(key) == 1 || key == " " {
 					m.query += key
+				}
+			} else if m.useCustom && m.customInputMode == 0 {
+				// Place code input - allow numbers only
+				key := msg.String()
+				if len(key) == 1 && key >= "0" && key <= "9" {
+					m.placeCodeInput += key
+				}
+			} else if m.useCustom && m.customInputMode == 1 {
+				// Service name input - allow alphanumeric and common symbols
+				key := msg.String()
+				if len(key) == 1 && (key >= "0" && key <= "9" || key >= "a" && key <= "z" || key >= "A" && key <= "Z" || key == "_" || key == "-" || key == ".") {
+					m.serviceNameInput += key
+				}
+			} else if m.useCustom && m.customInputMode == 2 {
+				// Custom params input - allow alphanumeric and common symbols
+				key := msg.String()
+				if len(key) == 1 && (key >= "0" && key <= "9" || key >= "a" && key <= "z" || key >= "A" && key <= "Z" || key == "_" || key == "-" || key == "." || key == ":" || key == "," || key == " ") {
+					m.customParamsInput += key
 				}
 			} else if m.iterationMode && !m.Chosen {
 				// Filter out special keys - only allow numbers
@@ -316,6 +421,14 @@ func (m model) View() string {
 		return queryView(m)
 	}
 
+	if m.publishModeSelect {
+		return publishModeView(m)
+	}
+
+	if m.useCustom && m.customInputMode >= 0 {
+		return customInputView(m)
+	}
+
 	if m.iterationMode {
 		return iterationView(m)
 	}
@@ -357,6 +470,54 @@ func choicesView(m model) string {
 	)
 
 	return fmt.Sprintf(tpl, choices)
+}
+
+// Publish mode selection view
+func publishModeView(m model) string {
+	c := m.publishModeChoice
+
+	tpl := "Select publish mode:\n\n"
+	tpl += "%s\n\n"
+	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
+		subtleStyle.Render("enter: choose") + dotStyle +
+		subtleStyle.Render("esc: back")
+
+	choices := fmt.Sprintf(
+		"%s\n%s",
+		checkbox("Default (uses default notification data)", c == 0),
+		checkbox("Custom (specify place_code, service_name, custom_params)", c == 1),
+	)
+
+	return fmt.Sprintf(tpl, choices)
+}
+
+// Custom input view for place_code, service_name, and custom_params
+func customInputView(m model) string {
+	var tpl string
+	var input string
+	var placeholder string
+
+	switch m.customInputMode {
+	case 0:
+		tpl = "Enter place_code (press Enter to skip, defaults to '0'):\n\n"
+		input = m.placeCodeInput
+		placeholder = "e.g., 1234 or leave empty for '0'"
+	case 1:
+		tpl = "Enter service_name (mandatory):\n\n"
+		input = m.serviceNameInput
+		placeholder = "e.g., demo, alerts, notifications"
+	case 2:
+		tpl = "Enter custom_params (press Enter to skip):\n\n"
+		input = m.customParamsInput
+		placeholder = "e.g., param1,param2 or leave empty"
+	}
+
+	tpl += "> %s\n\n"
+	tpl += subtleStyle.Render(placeholder) + "\n\n"
+	tpl += subtleStyle.Render("enter: confirm") + dotStyle +
+		subtleStyle.Render("esc: back")
+
+	return fmt.Sprintf(tpl, input)
 }
 
 // Query input view
@@ -521,7 +682,7 @@ func frameCmd() tea.Cmd {
 }
 
 // Execute action once
-func executeActionOnce(action int) tea.Cmd {
+func executeActionOnce(action int, placeCode, serviceName, customParams string) tea.Cmd {
 	return func() tea.Msg {
 		startTime := time.Now()
 		var result string
@@ -532,13 +693,13 @@ func executeActionOnce(action int) tea.Cmd {
 		switch action {
 		case 1:
 			// Publish create
-			key, channel := fakeRecordWithIteration(1, 1)
+			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, 1, 1)
 			publishRecordWithIteration(key, channel, 1, 1)
 			result = "Published create event successfully"
 			successful++
 		case 2:
 			// Publish create & delete
-			key, channel := fakeRecordWithIteration(1, 1)
+			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, 1, 1)
 			publishRecordWithIteration(key, channel, 1, 1)
 			time.Sleep(2 * time.Second)
 			err := client.Del(ctx, key).Err()
@@ -569,12 +730,12 @@ func executeActionOnce(action int) tea.Cmd {
 }
 
 // Execute action with iterations and delay
-func executeActionWithIterations(action int, iterations int, delay time.Duration) tea.Cmd {
+func executeActionWithIterations(action int, iterations int, delay time.Duration, placeCode, serviceName, customParams string) tea.Cmd {
 	return func() tea.Msg {
 		progressChan := make(chan progressMsg)
 
 		// Start the worker goroutine
-		go performIterations(action, iterations, delay, progressChan)
+		go performIterations(action, iterations, delay, placeCode, serviceName, customParams, progressChan)
 
 		// Listen for progress updates
 		return waitForProgress(progressChan)
@@ -603,7 +764,7 @@ func listenForProgress() tea.Cmd {
 }
 
 // Perform iterations with progress updates
-func performIterations(action int, iterations int, delay time.Duration, progressChan chan progressMsg) {
+func performIterations(action, iterations int, delay time.Duration, placeCode, serviceName, customParams string, progressChan chan progressMsg) {
 	defer close(progressChan)
 
 	startTime := time.Now()
@@ -637,12 +798,12 @@ func performIterations(action int, iterations int, delay time.Duration, progress
 		switch action {
 		case 1:
 			// Publish create
-			key, channel := fakeRecordWithIteration(i, iterations)
+			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, i, iterations)
 			publishRecordWithIteration(key, channel, i, iterations)
 			successful++
 		case 2:
 			// Publish create & delete
-			key, channel := fakeRecordWithIteration(i, iterations)
+			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, i, iterations)
 			publishRecordWithIteration(key, channel, i, iterations)
 			time.Sleep(2 * time.Second)
 			err := client.Del(ctx, key).Err()
