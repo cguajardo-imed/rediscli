@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	redis "github.com/redis/go-redis/v9"
@@ -124,11 +125,12 @@ var explorerRedisClient *redis.Client
 // model.explorerActive is true.
 type explorerModel struct {
 	phase           explorerPhase
-	dbCursor        int         // currently highlighted DB in the selector grid
-	currentDB       int         // DB that is currently loaded (-1 = none)
-	entries         []kvEntry   // all keys loaded for currentDB (never mutated after load)
-	filteredEntries []kvEntry   // entries after applying the current filter
-	tbl             table.Model // bubbles/table for key browsing
+	dbCursor        int            // currently highlighted DB in the selector grid
+	currentDB       int            // DB that is currently loaded (-1 = none)
+	entries         []kvEntry      // all keys loaded for currentDB (never mutated after load)
+	filteredEntries []kvEntry      // entries after applying the current filter
+	tbl             table.Model    // bubbles/table for key browsing
+	vp              viewport.Model // scrollable viewport for the value viewer
 	winWidth        int
 	winHeight       int
 	loading         bool
@@ -150,8 +152,30 @@ func newExplorerModel() explorerModel {
 		winHeight: 24,
 	}
 	m.tbl = buildExplorerTable(nil, m.winWidth, m.winHeight)
+	m.vp = viewport.New(80, 20)
 	m.filteredEntries = nil
 	return m
+}
+
+// initValueViewport sets up the viewport with the correct dimensions and
+// content each time the user opens the value viewer.
+func (m *explorerModel) initValueViewport() {
+	// Reserve lines for: title (1) + key line (1) + blank (1) +
+	// help bar (1) + blank (1) + top/bottom border (2) = 7
+	const reserved = 7
+	vpHeight := m.winHeight - reserved
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	// Border + padding on each side consume 4 chars of horizontal space
+	vpWidth := m.winWidth - 6
+	if vpWidth < 20 {
+		vpWidth = 20
+	}
+
+	m.vp = viewport.New(vpWidth, vpHeight)
+	m.vp.Style = exBorderStyle
+	m.vp.SetContent(wordWrap(m.valueBody, vpWidth-4)) // -4 for border+padding
 }
 
 // applyFilter recomputes filteredEntries from entries using filterQuery.
@@ -201,6 +225,9 @@ func (m explorerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.winHeight = msg.Height
 		if m.phase == phaseKeyTable {
 			m.tbl = resizeExplorerTable(m.tbl, m.entries, m.winWidth, m.winHeight)
+		}
+		if m.phase == phaseValueView {
+			m.initValueViewport()
 		}
 		return m, nil
 
@@ -409,6 +436,7 @@ func (m explorerModel) updateKeyTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if e.key == selectedKey {
 				m.valueKey = e.key
 				m.valueBody = e.value
+				m.initValueViewport()
 				m.phase = phaseValueView
 				return m, nil
 			}
@@ -429,12 +457,16 @@ func (m explorerModel) updateValueView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		closeExplorerClient()
 		return m, func() tea.Msg { return explorerDoneMsg{} }
-	case "esc", "enter", "backspace":
+	case "esc", "backspace":
 		m.phase = phaseKeyTable
 		m.valueKey = ""
 		m.valueBody = ""
+		return m, nil
 	}
-	return m, nil
+	// Delegate all other keys (↑ ↓ PgUp PgDn g G) to the viewport
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	return m, cmd
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -575,16 +607,19 @@ func (m explorerModel) viewValueView() string {
 	b.WriteString(exSubtitleStyle.Render("Key: ") + exSelectedStyle.Render(m.valueKey))
 	b.WriteString("\n\n")
 
-	maxW := m.winWidth - 8
-	if maxW < 20 {
-		maxW = 20
-	}
-	wrapped := wordWrap(m.valueBody, maxW)
-	b.WriteString(exBorderStyle.Render(wrapped))
+	b.WriteString(m.vp.View())
 	b.WriteString("\n\n")
+
+	// Scroll position indicator
+	scrollPct := 0
+	if m.vp.TotalLineCount() > 0 {
+		scrollPct = int(m.vp.ScrollPercent() * 100)
+	}
+	scrollInfo := exSubtitleStyle.Render(fmt.Sprintf("%d%%", scrollPct))
+
 	b.WriteString(exHelpStyle.Render(
-		"esc / enter / backspace: back to table   q: exit explorer",
-	))
+		"↑/↓/pgup/pgdn: scroll   g/G: top/bottom   esc/backspace: back",
+	) + "  " + scrollInfo)
 
 	return exMargin.Render(b.String())
 }
