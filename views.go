@@ -42,6 +42,9 @@ type model struct {
 	serviceNameInput  string
 	customParamsInput string
 	useCustom         bool
+	// Redis Explorer
+	explorerActive bool
+	explorer       explorerModel
 }
 
 type frameMsg time.Time
@@ -83,6 +86,20 @@ func (m model) Init() tea.Cmd {
 
 // Update handles messages and updates the model
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// ── Delegate all events to the explorer when it is active ──
+	if m.explorerActive {
+		switch msg := msg.(type) {
+		case explorerDoneMsg:
+			m.explorerActive = false
+			m.explorer = explorerModel{}
+			return m, nil
+		default:
+			updated, cmd := m.explorer.Update(msg)
+			m.explorer = updated.(explorerModel)
+			return m, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -99,15 +116,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			} else if m.customInputMode >= 0 && m.useCustom {
 				// Exit custom input and go back to mode selection
-				if m.customInputMode == 0 {
+				switch m.customInputMode {
+				case 0:
 					m.customInputMode = -1
 					m.placeCodeInput = ""
 					m.publishModeSelect = true
 					m.useCustom = false
-				} else if m.customInputMode == 1 {
+				case 1:
 					m.customInputMode = 0
 					m.serviceNameInput = ""
-				} else if m.customInputMode == 2 {
+				case 2:
 					m.customInputMode = 1
 					m.customParamsInput = ""
 				}
@@ -176,11 +194,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if m.useCustom && m.customInputMode >= 0 {
 				// Handle custom parameter inputs
-				if m.customInputMode == 0 {
+				switch m.customInputMode {
+				case 0:
 					// Place code entered (can be empty, defaults to "0")
 					m.customInputMode = 1 // Move to service_name
 					return m, nil
-				} else if m.customInputMode == 1 {
+				case 1:
 					// Service name entered (mandatory)
 					if m.serviceNameInput == "" {
 						m.queryResult = "Error: Service name is mandatory"
@@ -191,7 +210,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.customInputMode = 2 // Move to custom_params
 					return m, nil
-				} else if m.customInputMode == 2 {
+				case 2:
 					// Custom params entered (can be empty)
 					m.customInputMode = -1
 					m.useCustom = false
@@ -289,6 +308,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.publishModeChoice = 0
 				m.Chosen = false
 				return m, nil
+			case 3:
+				// Redis Explorer
+				m.explorer = newExplorerModel()
+				m.explorerActive = true
+				m.Chosen = false
+				return m, m.explorer.Init()
 			}
 			return m, nil
 
@@ -309,7 +334,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.publishModeChoice++
 				}
 			} else if !m.Chosen && !m.queryMode && m.queryResult == "" {
-				if m.Choice < 2 {
+				if m.Choice < 3 {
 					m.Choice++
 				}
 			}
@@ -417,6 +442,10 @@ func (m model) View() string {
 		return "Goodbye!\n"
 	}
 
+	if m.explorerActive {
+		return m.explorer.View()
+	}
+
 	if m.queryMode {
 		return queryView(m)
 	}
@@ -463,10 +492,11 @@ func choicesView(m model) string {
 		subtleStyle.Render("q, esc: quit")
 
 	choices := fmt.Sprintf(
-		"%s\n%s\n%s",
+		"%s\n%s\n%s\n%s",
 		checkbox("Query Redis", c == 0),
 		checkbox("Publish create", c == 1),
 		checkbox("Publish create & delete", c == 2),
+		checkbox("Redis Explorer", c == 3),
 	)
 
 	return fmt.Sprintf(tpl, choices)
@@ -574,14 +604,45 @@ func iterationProgressView(m model) string {
 	if m.selectedAction == 2 {
 		operationName = "Publish Create & Delete"
 	}
-	b.WriteString(fmt.Sprintf("Operation: %s\n\n", keywordStyle.Render(operationName)))
+	fmt.Fprintf(&b, "Operation: %s\n", keywordStyle.Render(operationName))
+
+	// Custom parameters panel — only shown when the user filled in custom values
+	if m.placeCodeInput != "" || m.serviceNameInput != "" || m.customParamsInput != "" {
+		b.WriteString(subtleStyle.Render("Parameters:") + "\n")
+
+		placeCode := m.placeCodeInput
+		if placeCode == "" {
+			placeCode = "0 (default)"
+		}
+		fmt.Fprintf(&b, "  %s %s\n",
+			subtleStyle.Render("place_code   :"),
+			keywordStyle.Render(placeCode))
+
+		serviceName := m.serviceNameInput
+		if serviceName == "" {
+			serviceName = "demo (default)"
+		}
+		fmt.Fprintf(&b, "  %s %s\n",
+			subtleStyle.Render("service_name :"),
+			keywordStyle.Render(serviceName))
+
+		customParams := m.customParamsInput
+		if customParams == "" {
+			customParams = "(empty)"
+		}
+		fmt.Fprintf(&b, "  %s %s\n",
+			subtleStyle.Render("custom_params:"),
+			keywordStyle.Render(customParams))
+	}
+
+	b.WriteString("\n")
 
 	// Progress bar
 	w := progressBarWidth
 	completed := int(m.Progress * float64(w))
 
 	var bar strings.Builder
-	for i := 0; i < w; i++ {
+	for i := range w {
 		if i < completed {
 			bar.WriteString(ramp[i].Render(progressFullChar))
 		} else {
@@ -593,23 +654,23 @@ func iterationProgressView(m model) string {
 
 	// Progress text
 	percent := m.Progress * 100
-	b.WriteString(fmt.Sprintf("Progress: %d/%d iterations (%.0f%%)\n", m.currentIter, m.iterations, percent))
+	fmt.Fprintf(&b, "Progress: %d/%d iterations (%.0f%%)\n", m.currentIter, m.iterations, percent)
 
 	// Current message
 	if m.processingMsg != "" {
-		b.WriteString(fmt.Sprintf("\n%s\n", subtleStyle.Render(m.processingMsg)))
+		fmt.Fprintf(&b, "\n%s\n", subtleStyle.Render(m.processingMsg))
 	}
 
 	// Elapsed time
 	if !m.startTime.IsZero() {
 		elapsed := time.Since(m.startTime)
-		b.WriteString(fmt.Sprintf("\nElapsed: %s\n", ticksStyle.Render(elapsed.Round(time.Millisecond).String())))
+		fmt.Fprintf(&b, "\nElapsed: %s\n", ticksStyle.Render(elapsed.Round(time.Millisecond).String()))
 
 		// Estimated time remaining
 		if m.currentIter > 0 && m.currentIter < m.iterations {
 			avgTimePerIter := elapsed / time.Duration(m.currentIter)
 			remaining := avgTimePerIter * time.Duration(m.iterations-m.currentIter)
-			b.WriteString(fmt.Sprintf("Estimated remaining: %s\n", subtleStyle.Render(remaining.Round(time.Second).String())))
+			fmt.Fprintf(&b, "Estimated remaining: %s\n", subtleStyle.Render(remaining.Round(time.Second).String()))
 		}
 	}
 
@@ -883,7 +944,7 @@ func executeQuery(query string) string {
 	case []any:
 		var builder strings.Builder
 		for i, v := range val {
-			builder.WriteString(fmt.Sprintf("%d) %v\n", i+1, v))
+			fmt.Fprintf(&builder, "%d) %v\n", i+1, v)
 		}
 		return builder.String()
 	case int64:

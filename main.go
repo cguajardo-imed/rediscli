@@ -106,7 +106,16 @@ func main() {
 }
 
 func printHelp() {
-	help := `rediscli - Redis CLI Tool
+	help := `
+██████╗ ███████╗██████╗ ██╗███████╗ ██████╗██╗     ██╗
+██╔══██╗██╔════╝██╔══██╗██║██╔════╝██╔════╝██║     ██║
+██████╔╝█████╗  ██║  ██║██║███████╗██║     ██║     ██║
+██╔══██╗██╔══╝  ██║  ██║██║╚════██║██║     ██║     ██║
+██║  ██║███████╗██████╔╝██║███████║╚██████╗███████╗██║
+╚═╝  ╚═╝╚══════╝╚═════╝ ╚═╝╚══════╝ ╚═════╝╚══════╝╚═╝
+                                         By Carlos Guajardo C.
+
+rediscli - Redis CLI Tool
 
 USAGE:
     rediscli [command] [args...]
@@ -131,11 +140,63 @@ OPTIONS:
     -v, --version   Show version information
 
 INTERACTIVE MODE:
-    When run without arguments, rediscli starts in interactive TUI mode
-    with the following options:
-    - Query Redis: Execute custom Redis commands
-    - Publish create: Create and publish a test record
-    - Publish create & delete: Create, publish, then delete a test record
+    When run without arguments, rediscli starts in interactive TUI mode.
+    Navigate with j/k or up/down arrows, confirm with enter, cancel with esc.
+
+    Menu options:
+
+    1. Query Redis
+       Execute any Redis command interactively and display the result.
+       Example input: GET mykey   or   HGETALL user:1
+
+    2. Publish Create
+       Create a test record in Redis and publish it to a channel.
+       Supports two modes:
+         Default  - uses built-in place_code, service_name and custom_params.
+         Custom   - prompts for:
+                      place_code    (numeric, optional — defaults to "0")
+                      service_name  (required)
+                      custom_params (optional)
+       After setting the mode you are asked for:
+         - Number of iterations  (how many records to create/publish)
+         - Delay between iterations (e.g. 1s, 500ms, 2m) — only when > 1 iteration
+       While running, the progress screen shows the parameters entered above,
+       a progress bar, iteration count, elapsed time and estimated time remaining.
+
+    3. Publish Create & Delete
+       Same flow as "Publish Create", but after each publish the key is deleted
+       and a second publish is fired to signal the deletion.
+
+    4. Redis Explorer
+       A full-screen TUI browser for your Redis databases.
+
+       DB Selector
+         ↑/↓/←→  navigate the 4x4 grid of databases (DB 0-15)
+         hjkl     vim-style navigation
+         enter    open the selected database
+         q/esc    return to the main menu
+
+       Key-Value Table
+         ↑/↓      move the row cursor
+         enter    open the full value viewer for the selected key
+         /        open the filter bar (filters by key or value, live)
+         r        refresh — re-scan the current database
+         D        jump back to the DB selector
+         esc      clear active filter, or go back to the DB selector
+         q        exit the explorer
+
+       Filter Bar  (activated with /)
+         type     narrow the table in real time (case-insensitive)
+         enter    confirm and return focus to the table
+         esc      cancel and clear the filter
+
+       Value Viewer
+         esc/enter/backspace   back to the table
+         q                     exit the explorer
+
+LOGGING:
+    In TUI mode every session is logged to logs/rediscli_<timestamp>.log.
+    The log file path is printed when the session ends.
 `
 	fmt.Print(help)
 }
