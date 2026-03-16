@@ -45,6 +45,13 @@ type model struct {
 	// Redis Explorer
 	explorerActive bool
 	explorer       explorerModel
+	// Self-update
+	updateMode      bool
+	updateLines     []string // progress lines streamed from SelfUpdate
+	updateDone      bool
+	updateErr       error
+	updateAvailable bool   // true when a newer version exists on GitHub
+	latestVersion   string // the version tag fetched from GitHub
 }
 
 type frameMsg time.Time
@@ -81,7 +88,7 @@ var (
 
 // Init initializes the model
 func (m model) Init() tea.Cmd {
-	return frameCmd()
+	return tea.Batch(frameCmd(), checkLatestVersionCmd())
 }
 
 // Update handles messages and updates the model
@@ -108,6 +115,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc":
+			if m.updateMode {
+				if m.updateDone {
+					m.updateMode = false
+					m.updateLines = nil
+					m.updateDone = false
+					m.updateErr = nil
+					m.Chosen = false
+				}
+				return m, nil
+			}
 			if m.queryMode {
 				// Exit query mode and return to main menu
 				m.queryMode = false
@@ -314,6 +331,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.explorerActive = true
 				m.Chosen = false
 				return m, m.explorer.Init()
+			case 4:
+				// Self-update — only reachable when updateAvailable is true
+				if m.updateAvailable {
+					m.updateMode = true
+					m.updateLines = []string{}
+					m.updateDone = false
+					m.updateErr = nil
+					m.Chosen = false
+					return m, runSelfUpdateCmd()
+				}
 			}
 			return m, nil
 
@@ -334,7 +361,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.publishModeChoice++
 				}
 			} else if !m.Chosen && !m.queryMode && m.queryResult == "" {
-				if m.Choice < 3 {
+				maxChoice := 3
+				if m.updateAvailable {
+					maxChoice = 4
+				}
+				if m.Choice < maxChoice {
 					m.Choice++
 				}
 			}
@@ -429,6 +460,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentIter = 0
 		return m, nil
 
+	case updateProgressMsg:
+		m.updateLines = append(m.updateLines, msg.line)
+		// Keep draining the channel for the next progress line.
+		return m, waitForUpdateMsg()
+
+	case versionCheckMsg:
+		if msg.latestVersion != "" && msg.latestVersion != Version {
+			m.updateAvailable = true
+			m.latestVersion = msg.latestVersion
+		}
+		return m, nil
+
+	case updateDoneMsg:
+		m.updateDone = true
+		if msg.err != nil {
+			m.updateErr = msg.err
+			m.updateLines = append(m.updateLines, errorStyle.Render("Error: "+msg.err.Error()))
+		} else if msg.result != nil && msg.result.AlreadyLatest {
+			m.updateLines = append(m.updateLines, successStyle.Render(
+				fmt.Sprintf("Already up to date (%s).", msg.result.NewVersion),
+			))
+		} else if msg.result != nil {
+			m.updateLines = append(m.updateLines, successStyle.Render(
+				fmt.Sprintf("Updated %s → %s. Restart to apply.", msg.result.PreviousVersion, msg.result.NewVersion),
+			))
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		return m, nil
 	}
@@ -444,6 +503,10 @@ func (m model) View() string {
 
 	if m.explorerActive {
 		return m.explorer.View()
+	}
+
+	if m.updateMode {
+		return updateView(m)
 	}
 
 	if m.queryMode {
@@ -491,13 +554,26 @@ func choicesView(m model) string {
 		subtleStyle.Render("enter: choose") + dotStyle +
 		subtleStyle.Render("q, esc: quit")
 
-	choices := fmt.Sprintf(
-		"%s\n%s\n%s\n%s",
-		checkbox("Query Redis", c == 0),
-		checkbox("Publish create", c == 1),
-		checkbox("Publish create & delete", c == 2),
-		checkbox("Redis Explorer", c == 3),
-	)
+	var choices string
+	if m.updateAvailable {
+		choices = fmt.Sprintf(
+			"%s\n%s\n%s\n%s\n%s",
+			checkbox("Query Redis", c == 0),
+			checkbox("Publish create", c == 1),
+			checkbox("Publish create & delete", c == 2),
+			checkbox("Redis Explorer", c == 3),
+			checkbox(fmt.Sprintf("Update rediscli  %s → %s",
+				Version, m.latestVersion), c == 4),
+		)
+	} else {
+		choices = fmt.Sprintf(
+			"%s\n%s\n%s\n%s",
+			checkbox("Query Redis", c == 0),
+			checkbox("Publish create", c == 1),
+			checkbox("Publish create & delete", c == 2),
+			checkbox("Redis Explorer", c == 3),
+		)
+	}
 
 	return fmt.Sprintf(tpl, choices)
 }
@@ -909,6 +985,79 @@ func performIterations(action, iterations int, delay time.Duration, placeCode, s
 
 type resultMsg struct {
 	result string
+}
+
+// ── Self-update view ──────────────────────────────────────────────────────────
+
+func updateView(m model) string {
+	var b strings.Builder
+
+	b.WriteString(keywordStyle.Render("Update rediscli"))
+	b.WriteString("\n\n")
+
+	for _, line := range m.updateLines {
+		b.WriteString(line + "\n")
+	}
+
+	if !m.updateDone {
+		b.WriteString("\n" + subtleStyle.Render("Please wait…"))
+	} else {
+		b.WriteString("\n" + subtleStyle.Render("Press esc to return to the menu."))
+	}
+
+	return mainStyle.Render(b.String())
+}
+
+// ── Version check ─────────────────────────────────────────────────────────────
+
+type versionCheckMsg struct{ latestVersion string }
+
+// checkLatestVersionCmd silently queries the GitHub API on startup.
+// It never blocks the UI — on any error it simply returns an empty tag.
+func checkLatestVersionCmd() tea.Cmd {
+	return func() tea.Msg {
+		release, err := fetchLatestRelease()
+		if err != nil || release == nil {
+			return versionCheckMsg{}
+		}
+		return versionCheckMsg{latestVersion: release.TagName}
+	}
+}
+
+// ── Self-update async messages & command ─────────────────────────────────────
+
+type updateProgressMsg struct{ line string }
+type updateDoneMsg struct {
+	result *UpdateResult
+	err    error
+}
+
+// updateMsgChan carries progress and done messages from the updater goroutine.
+var updateMsgChan chan tea.Msg
+
+// runSelfUpdateCmd kicks off the self-update in a background goroutine and
+// returns the first cmd that begins draining the channel, mirroring the same
+// pattern used by performIterations / waitForProgress.
+func runSelfUpdateCmd() tea.Cmd {
+	updateMsgChan = make(chan tea.Msg, 32)
+
+	go func() {
+		result, err := SelfUpdate(func(line string) {
+			updateMsgChan <- updateProgressMsg{line: line}
+		})
+		updateMsgChan <- updateDoneMsg{result: result, err: err}
+		close(updateMsgChan)
+	}()
+
+	return waitForUpdateMsg()
+}
+
+// waitForUpdateMsg returns a Cmd that reads one message from updateMsgChan.
+// After each updateProgressMsg the TUI calls this again to keep draining.
+func waitForUpdateMsg() tea.Cmd {
+	return func() tea.Msg {
+		return <-updateMsgChan
+	}
 }
 
 // Execute a Redis query and return the result as a string

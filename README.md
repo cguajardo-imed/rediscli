@@ -156,6 +156,33 @@ second publish is fired to signal the deletion — simulating a full record life
 
 ---
 
+### 5. Update rediscli
+
+Downloads and installs the latest release from GitHub, replacing the current
+binary in place.
+
+**Update process:**
+
+1. Queries the GitHub releases API for the latest version tag
+2. Compares it against the currently running version — exits early if already up to date
+3. Downloads the correct binary for your platform
+4. Verifies the **SHA-256 checksum** of the downloaded file
+5. Atomically replaces the running binary (backs up the current one first and
+   restores it automatically if anything goes wrong)
+6. Reports each step live on screen as it progresses
+
+Restart rediscli after a successful update to run the new version.
+
+**Supported platforms:**
+
+| OS      | Architecture |
+| ------- | ------------ |
+| Linux   | amd64, arm64 |
+| macOS   | amd64, arm64 |
+| Windows | amd64        |
+
+---
+
 ### 4. Redis Explorer
 
 A full-screen TUI browser for your Redis databases.
@@ -215,6 +242,32 @@ Shows the full, word-wrapped value of the selected key inside a rounded border b
 | ------------------------ | ------------------- |
 | `esc` / `enter` / `backspace` | back to the table   |
 | `q`                      | exit the explorer   |
+
+---
+
+## Updating
+
+The built-in updater can be triggered from the TUI menu (**Update rediscli**) or
+you can run it from the command line by launching the TUI and selecting option 5.
+
+The updater pulls releases from:
+
+```
+https://github.com/cguajardo-imed/rediscli/releases/latest
+```
+
+Binary asset naming convention:
+
+```
+rediscli-linux-amd64
+rediscli-linux-arm64
+rediscli-darwin-amd64
+rediscli-darwin-arm64
+rediscli-windows-amd64.exe
+```
+
+Each asset ships with a `.sha256` checksum file that is verified before the
+binary is installed.
 
 ---
 

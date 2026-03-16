@@ -170,6 +170,21 @@ INTERACTIVE MODE:
     4. Redis Explorer
        A full-screen TUI browser for your Redis databases.
 
+    5. Update rediscli
+       Downloads and installs the latest release from GitHub, replacing the
+       current binary in place. The update process:
+         - Queries the GitHub releases API for the latest version tag
+         - Compares it against the currently running version
+         - Downloads the correct binary for your platform (linux/darwin/windows,
+           amd64/arm64)
+         - Verifies the SHA-256 checksum of the downloaded file
+         - Atomically replaces the running binary (backs up the current one
+           first and restores it automatically if anything goes wrong)
+         - Reports each step live on screen as it progresses
+       Restart rediscli after a successful update to run the new version.
+       Supported platforms: linux-amd64, linux-arm64, darwin-amd64,
+                            darwin-arm64, windows-amd64.
+
        DB Selector
          ↑/↓/←→  navigate the 4x4 grid of databases (DB 0-15)
          hjkl     vim-style navigation
