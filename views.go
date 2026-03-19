@@ -42,6 +42,11 @@ type model struct {
 	serviceNameInput  string
 	customParamsInput string
 	useCustom         bool
+	// Ack generation
+	ackMode         bool // true when in ack generation flow
+	ackActionSelect bool // true when selecting receive/read action
+	ackActionChoice int  // 0 = receive, 1 = read
+	ackCountInput   string
 	// Redis Explorer
 	explorerActive bool
 	explorer       explorerModel
@@ -52,6 +57,9 @@ type model struct {
 	updateErr       error
 	updateAvailable bool   // true when a newer version exists on GitHub
 	latestVersion   string // the version tag fetched from GitHub
+	// Window dimensions
+	winWidth  int
+	winHeight int
 }
 
 type frameMsg time.Time
@@ -88,7 +96,7 @@ var (
 
 // Init initializes the model
 func (m model) Init() tea.Cmd {
-	return tea.Batch(frameCmd(), checkLatestVersionCmd())
+	return tea.Batch(frameCmd(), checkLatestVersionCmd(), tea.EnableMouseCellMotion)
 }
 
 // Update handles messages and updates the model
@@ -108,8 +116,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Track window dimensions
+		m.winWidth = msg.Width
+		m.winHeight = msg.Height
+		return m, nil
+
+	case tea.MouseMsg:
+		// Handle mouse clicks on toasts
+		if msg.Type == tea.MouseLeft {
+			// Check if click is within toast area (top of screen)
+			// Each toast is approximately 3 lines tall with border
+			toastCount := GetToastCount()
+			if toastCount > 0 && msg.Y < toastCount*4 {
+				// Calculate which toast was clicked (0 = most recent/top)
+				toastIndex := msg.Y / 4
+				if toastIndex < toastCount {
+					toastID := GetGlobalToastManager().GetToastIDAt(toastIndex)
+					if toastID != -1 {
+						GetGlobalToastManager().Remove(toastID)
+					}
+				}
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
+		case "o":
+			// Dismiss the most recent toast
+			if DismissMostRecentToast() {
+				return m, nil
+			}
+
 		case "ctrl+c", "q":
 			m.Quitting = true
 			return m, tea.Quit
@@ -153,6 +192,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.publishModeChoice = 0
 				m.Chosen = false
 				return m, nil
+			} else if m.ackActionSelect {
+				// Exit ack action selection and return to main menu
+				m.ackActionSelect = false
+				m.ackActionChoice = 0
+				m.Chosen = false
+				return m, nil
+			} else if m.ackMode {
+				// Exit ack count input and return to action selection
+				m.ackMode = false
+				m.ackCountInput = ""
+				m.ackActionSelect = true
+				return m, nil
 			} else if m.iterationMode {
 				// Exit iteration mode and return to main menu
 				m.iterationMode = false
@@ -189,6 +240,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.queryResult = executeQuery(m.query)
 				m.query = ""
 				m.queryMode = false
+				return m, nil
+			}
+
+			if m.ackActionSelect {
+				// User selected receive or read action
+				m.ackActionSelect = false
+				m.ackMode = true
+				return m, nil
+			}
+
+			if m.ackMode {
+				// Parse ack count
+				if m.ackCountInput == "" {
+					m.queryResult = "Error: Please enter a valid number of ack records"
+					m.ackMode = false
+					m.Chosen = false
+					return m, nil
+				}
+
+				count, err := strconv.Atoi(m.ackCountInput)
+				if err != nil || count < 1 {
+					m.queryResult = "Error: Please enter a valid number (1 or greater)"
+					m.ackMode = false
+					m.ackCountInput = ""
+					m.Chosen = false
+					return m, nil
+				}
+
+				// Generate the ack records
+				action := "receive"
+				if m.ackActionChoice == 1 {
+					action = "read"
+				}
+
+				created, err := generateAckRecords(action, count, 1, 1)
+				if err != nil {
+					m.queryResult = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.queryResult = fmt.Sprintf("Successfully created %d ack record(s) with action '%s'", created, action)
+				}
+
+				m.ackMode = false
+				m.ackCountInput = ""
+				m.ackActionChoice = 0
+				m.Chosen = false
 				return m, nil
 			}
 
@@ -326,12 +422,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Chosen = false
 				return m, nil
 			case 3:
+				// Generate Ack Records - ask for action (receive/read)
+				m.ackActionSelect = true
+				m.ackActionChoice = 0
+				m.Chosen = false
+				return m, nil
+			case 4:
 				// Redis Explorer
 				m.explorer = newExplorerModel()
 				m.explorerActive = true
 				m.Chosen = false
 				return m, m.explorer.Init()
-			case 4:
+			case 5:
 				// Self-update — only reachable when updateAvailable is true
 				if m.updateAvailable {
 					m.updateMode = true
@@ -345,7 +447,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "up", "k":
-			if m.publishModeSelect {
+			if m.ackActionSelect {
+				if m.ackActionChoice > 0 {
+					m.ackActionChoice--
+				}
+			} else if m.publishModeSelect {
 				if m.publishModeChoice > 0 {
 					m.publishModeChoice--
 				}
@@ -356,14 +462,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "down", "j":
-			if m.publishModeSelect {
+			if m.ackActionSelect {
+				if m.ackActionChoice < 1 {
+					m.ackActionChoice++
+				}
+			} else if m.publishModeSelect {
 				if m.publishModeChoice < 1 {
 					m.publishModeChoice++
 				}
 			} else if !m.Chosen && !m.queryMode && m.queryResult == "" {
-				maxChoice := 3
+				maxChoice := 4
 				if m.updateAvailable {
-					maxChoice = 4
+					maxChoice = 5
 				}
 				if m.Choice < maxChoice {
 					m.Choice++
@@ -379,6 +489,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.serviceNameInput = m.serviceNameInput[:len(m.serviceNameInput)-1]
 			} else if m.useCustom && m.customInputMode == 2 && len(m.customParamsInput) > 0 {
 				m.customParamsInput = m.customParamsInput[:len(m.customParamsInput)-1]
+			} else if m.ackMode && len(m.ackCountInput) > 0 {
+				m.ackCountInput = m.ackCountInput[:len(m.ackCountInput)-1]
 			} else if m.iterationMode && len(m.iterationInput) > 0 {
 				m.iterationInput = m.iterationInput[:len(m.iterationInput)-1]
 			} else if m.delayMode && len(m.delayInput) > 0 {
@@ -415,6 +527,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				key := msg.String()
 				if len(key) == 1 && key >= "0" && key <= "9" {
 					m.iterationInput += key
+				}
+			} else if m.ackMode && !m.Chosen {
+				// Filter out special keys - only allow numbers
+				key := msg.String()
+				if len(key) == 1 && key >= "0" && key <= "9" {
+					m.ackCountInput += key
 				}
 			} else if m.delayMode && !m.Chosen {
 				// Filter out special keys - allow numbers, letters (for s, m, h), and decimal point
@@ -488,8 +606,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.WindowSizeMsg:
-		return m, nil
 	}
 
 	return m, nil
@@ -511,6 +627,14 @@ func (m model) View() string {
 
 	if m.queryMode {
 		return queryView(m)
+	}
+
+	if m.ackActionSelect {
+		return ackActionView(m)
+	}
+
+	if m.ackMode {
+		return ackCountView(m)
 	}
 
 	if m.publishModeSelect {
@@ -557,21 +681,23 @@ func choicesView(m model) string {
 	var choices string
 	if m.updateAvailable {
 		choices = fmt.Sprintf(
+			"%s\n%s\n%s\n%s\n%s\n%s",
+			checkbox("Query Redis", c == 0),
+			checkbox("Publish create", c == 1),
+			checkbox("Publish create & delete", c == 2),
+			checkbox("Generate Ack Records", c == 3),
+			checkbox("Redis Explorer", c == 4),
+			checkbox(fmt.Sprintf("Update rediscli  %s → %s",
+				Version, m.latestVersion), c == 5),
+		)
+	} else {
+		choices = fmt.Sprintf(
 			"%s\n%s\n%s\n%s\n%s",
 			checkbox("Query Redis", c == 0),
 			checkbox("Publish create", c == 1),
 			checkbox("Publish create & delete", c == 2),
-			checkbox("Redis Explorer", c == 3),
-			checkbox(fmt.Sprintf("Update rediscli  %s → %s",
-				Version, m.latestVersion), c == 4),
-		)
-	} else {
-		choices = fmt.Sprintf(
-			"%s\n%s\n%s\n%s",
-			checkbox("Query Redis", c == 0),
-			checkbox("Publish create", c == 1),
-			checkbox("Publish create & delete", c == 2),
-			checkbox("Redis Explorer", c == 3),
+			checkbox("Generate Ack Records", c == 3),
+			checkbox("Redis Explorer", c == 4),
 		)
 	}
 
@@ -669,6 +795,40 @@ func resultsView(m model) string {
 	}
 
 	return mainStyle.Render(fmt.Sprintf(tpl, result))
+}
+
+// Ack action selection view
+func ackActionView(m model) string {
+	c := m.ackActionChoice
+
+	tpl := "Select ack action:\n\n"
+	tpl += "%s\n\n"
+	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
+		subtleStyle.Render("enter: choose") + dotStyle +
+		subtleStyle.Render("esc: back")
+
+	choices := fmt.Sprintf(
+		"%s\n%s",
+		checkbox("receive", c == 0),
+		checkbox("read", c == 1),
+	)
+
+	return fmt.Sprintf(tpl, choices)
+}
+
+// Ack count input view
+func ackCountView(m model) string {
+	action := "receive"
+	if m.ackActionChoice == 1 {
+		action = "read"
+	}
+
+	tpl := fmt.Sprintf("How many '%s' ack records to generate?\n\n", action)
+	tpl += "> %s\n\n"
+	tpl += subtleStyle.Render("enter: confirm") + dotStyle +
+		subtleStyle.Render("esc: back")
+
+	return mainStyle.Render(fmt.Sprintf(tpl, keywordStyle.Render(m.ackCountInput)))
 }
 
 // Iteration progress view

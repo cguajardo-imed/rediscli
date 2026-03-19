@@ -156,6 +156,30 @@ second publish is fired to signal the deletion — simulating a full record life
 
 ---
 
+### 4. Generate Ack Records
+
+Creates acknowledgment (ack) records in Redis for existing notification UUIDs.
+
+**Flow:**
+
+1. Select action — **receive** or **read**
+2. Enter the number of ack records to generate
+
+The function will:
+- Scan for existing notification UUIDs in Redis
+- Create the specified number of ack records with random fingerprints
+- Distribute records round-robin across all available UUIDs
+- Store each record with key format: `ack:<md5-hash>`
+
+**Prerequisites:** At least one notification record must exist in Redis (created via "Publish Create").
+
+**Example output:**
+```
+Successfully created 10 ack record(s) with action 'receive'
+```
+
+---
+
 ### 5. Update rediscli
 
 Downloads and installs the latest release from GitHub, replacing the current
@@ -183,7 +207,7 @@ Restart rediscli after a successful update to run the new version.
 
 ---
 
-### 4. Redis Explorer
+### 6. Redis Explorer
 
 A full-screen TUI browser for your Redis databases.
 

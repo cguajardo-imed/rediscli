@@ -6,68 +6,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// setupRedisContainer starts a Redis container for testing
-func setupRedisContainer(t *testing.T) (testcontainers.Container, *redis.Client, context.Context) {
+// setupRedisContainer starts a miniredis instance for testing
+func setupRedisContainer(t *testing.T) (*miniredis.Miniredis, *redis.Client, context.Context) {
+	t.Helper()
 	ctx := context.Background()
 
-	req := testcontainers.ContainerRequest{
-		Image:        "redis:7-alpine",
-		ExposedPorts: []string{"6379/tcp"},
-		WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(60 * time.Second),
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("Failed to start miniredis: %v", err)
 	}
 
-	redisContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	if err != nil {
-		t.Fatalf("Failed to start Redis container: %v", err)
-	}
-
-	host, err := redisContainer.Host(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get container host: %v", err)
-	}
-
-	port, err := redisContainer.MappedPort(ctx, "6379")
-	if err != nil {
-		t.Fatalf("Failed to get container port: %v", err)
-	}
+	// Suppress Redis client library warnings
+	redis.SetLogger(&discardLogger{})
 
 	client := redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%s", host, port.Port()),
+		Addr:         mr.Addr(),
 		Password:     "",
 		DB:           0,
 		PoolSize:     200,
 		MinIdleConns: 50,
 	})
 
-	// Wait for Redis to be ready
-	maxRetries := 30
-	for i := 0; i < maxRetries; i++ {
-		if err := client.Ping(ctx).Err(); err == nil {
-			break
-		}
-		if i == maxRetries-1 {
-			t.Fatalf("Redis container failed to become ready")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	return redisContainer, client, ctx
+	return mr, client, ctx
 }
 
 // TestBasicRedisOperations tests basic Redis commands like SET, GET, DEL, EXISTS
 func TestBasicRedisOperations(t *testing.T) {
-	container, redisClient, ctx := setupRedisContainer(t)
+	mr, redisClient, ctx := setupRedisContainer(t)
 	defer func() {
 		redisClient.Close()
-		container.Terminate(ctx)
+		mr.Close()
 	}()
 
 	tests := []struct {
@@ -175,10 +147,10 @@ func TestBasicRedisOperations(t *testing.T) {
 
 // TestRedisDataStructures tests Redis data structures (Lists, Hashes, Sets)
 func TestRedisDataStructures(t *testing.T) {
-	container, redisClient, ctx := setupRedisContainer(t)
+	mr, redisClient, ctx := setupRedisContainer(t)
 	defer func() {
 		redisClient.Close()
-		container.Terminate(ctx)
+		mr.Close()
 	}()
 
 	t.Run("List operations", func(t *testing.T) {
@@ -227,9 +199,22 @@ func TestRedisDataStructures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HGETALL failed: %v", err)
 		}
-		fields, ok := result.([]interface{})
-		if !ok || len(fields) < 4 {
-			t.Errorf("Expected hash with at least 4 elements, got %v", result)
+		// miniredis returns a map, real Redis returns a slice
+		switch v := result.(type) {
+		case []interface{}:
+			if len(v) != 4 {
+				t.Errorf("Expected 4 elements in slice (2 field-value pairs), got %d", len(v))
+			}
+		case map[string]string:
+			if len(v) != 2 {
+				t.Errorf("Expected 2 fields in map, got %d", len(v))
+			}
+		case map[interface{}]interface{}:
+			if len(v) != 2 {
+				t.Errorf("Expected 2 fields in map[interface{}]interface{}, got %d", len(v))
+			}
+		default:
+			t.Errorf("Unexpected HGETALL result type: %T, value: %v", result, result)
 		}
 	})
 
@@ -258,10 +243,10 @@ func TestRedisDataStructures(t *testing.T) {
 // TestConnectionAndAuthentication tests connection status and authentication
 func TestConnectionAndAuthentication(t *testing.T) {
 	t.Run("Connection status check", func(t *testing.T) {
-		container, redisClient, ctx := setupRedisContainer(t)
+		mr, redisClient, ctx := setupRedisContainer(t)
 		defer func() {
 			redisClient.Close()
-			container.Terminate(ctx)
+			mr.Close()
 		}()
 
 		// Test successful connection using PING
@@ -278,21 +263,20 @@ func TestConnectionAndAuthentication(t *testing.T) {
 	})
 
 	t.Run("Multiple database support", func(t *testing.T) {
-		container, _, ctx := setupRedisContainer(t)
-		defer container.Terminate(ctx)
+		mr, _, ctx := setupRedisContainer(t)
+		defer mr.Close()
 
-		host, _ := container.Host(ctx)
-		port, _ := container.MappedPort(ctx, "6379")
+		addr := mr.Addr()
 
 		// Create clients for different databases
 		client0 := redis.NewClient(&redis.Options{
-			Addr: fmt.Sprintf("%s:%s", host, port.Port()),
+			Addr: addr,
 			DB:   0,
 		})
 		defer client0.Close()
 
 		client1 := redis.NewClient(&redis.Options{
-			Addr: fmt.Sprintf("%s:%s", host, port.Port()),
+			Addr: addr,
 			DB:   1,
 		})
 		defer client1.Close()
@@ -323,10 +307,10 @@ func TestConnectionAndAuthentication(t *testing.T) {
 	})
 
 	t.Run("Key expiration", func(t *testing.T) {
-		container, redisClient, ctx := setupRedisContainer(t)
+		mr, redisClient, ctx := setupRedisContainer(t)
 		defer func() {
 			redisClient.Close()
-			container.Terminate(ctx)
+			mr.Close()
 		}()
 
 		// Set key with expiration
@@ -348,8 +332,8 @@ func TestConnectionAndAuthentication(t *testing.T) {
 			t.Errorf("Expected TTL between 1-2, got %v", ttlResult)
 		}
 
-		// Wait for expiration
-		time.Sleep(3 * time.Second)
+		// Fast-forward miniredis time to trigger expiration
+		mr.FastForward(3 * time.Second)
 
 		// Key should not exist
 		existsResult, err := redisClient.Do(ctx, "EXISTS", "expkey").Result()
@@ -441,10 +425,10 @@ func TestConfigValidation(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkRedisSet(b *testing.B) {
-	container, redisClient, ctx := setupRedisContainerForBench(b)
+	mr, redisClient, ctx := setupRedisContainerForBench(b)
 	defer func() {
 		redisClient.Close()
-		container.Terminate(ctx)
+		mr.Close()
 	}()
 
 	b.ResetTimer()
@@ -455,10 +439,10 @@ func BenchmarkRedisSet(b *testing.B) {
 }
 
 func BenchmarkRedisGet(b *testing.B) {
-	container, redisClient, ctx := setupRedisContainerForBench(b)
+	mr, redisClient, ctx := setupRedisContainerForBench(b)
 	defer func() {
 		redisClient.Close()
-		container.Terminate(ctx)
+		mr.Close()
 	}()
 
 	// Pre-populate data
@@ -475,10 +459,10 @@ func BenchmarkRedisGet(b *testing.B) {
 }
 
 func BenchmarkRedisPipeline(b *testing.B) {
-	container, redisClient, ctx := setupRedisContainerForBench(b)
+	mr, redisClient, ctx := setupRedisContainerForBench(b)
 	defer func() {
 		redisClient.Close()
-		container.Terminate(ctx)
+		mr.Close()
 	}()
 
 	b.ResetTimer()
@@ -493,52 +477,25 @@ func BenchmarkRedisPipeline(b *testing.B) {
 }
 
 // Helper function for benchmarks
-func setupRedisContainerForBench(b *testing.B) (testcontainers.Container, *redis.Client, context.Context) {
+func setupRedisContainerForBench(b *testing.B) (*miniredis.Miniredis, *redis.Client, context.Context) {
+	b.Helper()
 	ctx := context.Background()
 
-	req := testcontainers.ContainerRequest{
-		Image:        "redis:7-alpine",
-		ExposedPorts: []string{"6379/tcp"},
-		WaitingFor:   wait.ForLog("Ready to accept connections").WithStartupTimeout(60 * time.Second),
+	mr, err := miniredis.Run()
+	if err != nil {
+		b.Fatalf("Failed to start miniredis: %v", err)
 	}
 
-	redisContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
-	if err != nil {
-		b.Fatalf("Failed to start Redis container: %v", err)
-	}
-
-	host, err := redisContainer.Host(ctx)
-	if err != nil {
-		b.Fatalf("Failed to get container host: %v", err)
-	}
-
-	port, err := redisContainer.MappedPort(ctx, "6379")
-	if err != nil {
-		b.Fatalf("Failed to get container port: %v", err)
-	}
+	// Suppress Redis client library warnings
+	redis.SetLogger(&discardLogger{})
 
 	client := redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%s", host, port.Port()),
+		Addr:         mr.Addr(),
 		Password:     "",
 		DB:           0,
 		PoolSize:     200,
 		MinIdleConns: 50,
 	})
 
-	// Wait for Redis to be ready
-	maxRetries := 30
-	for i := 0; i < maxRetries; i++ {
-		if err := client.Ping(ctx).Err(); err == nil {
-			break
-		}
-		if i == maxRetries-1 {
-			b.Fatalf("Redis container failed to become ready")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	return redisContainer, client, ctx
+	return mr, client, ctx
 }

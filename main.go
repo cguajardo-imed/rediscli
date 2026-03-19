@@ -71,27 +71,31 @@ func main() {
 
 	// Otherwise, run in TUI mode
 	initialModel := model{
-		Choice:         0,
-		Chosen:         false,
-		Frames:         0,
-		Progress:       0,
-		Loaded:         false,
-		Quitting:       false,
-		query:          "",
-		queryMode:      false,
-		queryResult:    "",
-		err:            nil,
-		iterationMode:  false,
-		delayMode:      false,
-		iterationInput: "",
-		delayInput:     "",
-		iterations:     0,
-		delay:          0,
-		currentIter:    0,
-		selectedAction: 0,
-		isProcessing:   false,
-		processingMsg:  "",
-		progressChan:   nil,
+		Choice:          0,
+		Chosen:          false,
+		Frames:          0,
+		Progress:        0,
+		Loaded:          false,
+		Quitting:        false,
+		query:           "",
+		queryMode:       false,
+		queryResult:     "",
+		err:             nil,
+		iterationMode:   false,
+		delayMode:       false,
+		iterationInput:  "",
+		delayInput:      "",
+		iterations:      0,
+		delay:           0,
+		currentIter:     0,
+		selectedAction:  0,
+		isProcessing:    false,
+		processingMsg:   "",
+		progressChan:    nil,
+		ackMode:         false,
+		ackActionSelect: false,
+		ackActionChoice: 0,
+		ackCountInput:   "",
 	}
 
 	LogBanner("Redis CLI Starting in TUI Mode")
@@ -167,10 +171,23 @@ INTERACTIVE MODE:
        Same flow as "Publish Create", but after each publish the key is deleted
        and a second publish is fired to signal the deletion.
 
-    4. Redis Explorer
+    4. Generate Ack
+       Creates ack acknowledgement records in Redis for existing notification UUIDs.
+       Flow:
+         - Select action: "receive" or "read"
+         - Enter how many ack records to generate
+       Each record is stored as:
+         Key:   ack:<md5-of-payload>
+         Value: {"action":"receive|read","uuid":"<notification-uuid>",
+                 "date":"<current-time>","fingerprint":"<random-96-hex-chars>"}
+       UUIDs are picked from existing notification keys already in Redis
+       (created via "Publish Create"). At least one notification record must
+       exist before generating acks.
+
+    5. Redis Explorer
        A full-screen TUI browser for your Redis databases.
 
-    5. Update rediscli
+    6. Update rediscli
        Downloads and installs the latest release from GitHub, replacing the
        current binary in place. The update process:
          - Queries the GitHub releases API for the latest version tag

@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	redis "github.com/redis/go-redis/v9"
 )
 
@@ -297,4 +300,106 @@ func getKeysByPattern(pattern string) ([]string, error) {
 	}
 
 	return keys, nil
+}
+
+// ackRecord represents the JSON payload stored under an ack:* key.
+type ackRecord struct {
+	Action      string `json:"action"`
+	UUID        string `json:"uuid"`
+	Date        string `json:"date"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// generateAckRecords creates `count` ack records in Redis.
+// action must be "receive" or "read".
+// It looks up existing notification UUIDs (values stored under cl:* keys)
+// and picks them round-robin so every generated ack points to a real UUID.
+// If no notification keys exist the function returns an error.
+func generateAckRecords(action string, count int, iteration, total int) (int, error) {
+	return generateAckRecordsWithClient(client, ctx, action, count, iteration, total)
+}
+
+// generateAckRecordsWithClient is the testable core of generateAckRecords.
+// It accepts explicit redis client and context so tests can inject a containerised instance.
+func generateAckRecordsWithClient(redisClient *redis.Client, redisCtx context.Context, action string, count int, iteration, total int) (int, error) {
+	// Collect candidate UUIDs from existing notification keys.
+	// The fakeRecordWithIterationAndParams function stores keys like
+	//   cl:<placeCode>:<serviceName>:<customParams>:<parentUUID>
+	// whose value IS the parentUUID, and a second key equal to the parentUUID
+	// whose value is the full JSON payload.
+	// We scan for UUID-shaped keys (the parentUUID keys) directly.
+	var uuids []string
+	iter := redisClient.Scan(redisCtx, 0, "*-*-*-*-*", 0).Iterator()
+	for iter.Next(redisCtx) {
+		uuids = append(uuids, iter.Val())
+	}
+
+	if len(uuids) > 0 {
+		LogInfo(fmt.Sprintf("Found %d notification UUID(s) for ack generation", len(uuids)))
+	}
+
+	if len(uuids) == 0 {
+		// Fallback: scan cl:* keys and read their values
+		var clKeys []string
+		clIter := redisClient.Scan(redisCtx, 0, "cl:*", 0).Iterator()
+		for clIter.Next(redisCtx) {
+			clKeys = append(clKeys, clIter.Val())
+		}
+		if clErr := clIter.Err(); clErr != nil {
+			return 0, fmt.Errorf("failed to scan Redis keys: %w", clErr)
+		}
+		if len(clKeys) == 0 {
+			return 0, fmt.Errorf("no notification records found in Redis; please create some first")
+		}
+		for _, k := range clKeys {
+			val, vErr := redisClient.Get(redisCtx, k).Result()
+			if vErr == nil && val != "" {
+				uuids = append(uuids, val)
+			}
+		}
+		if len(uuids) > 0 {
+			LogInfo(fmt.Sprintf("Found %d notification UUID(s) via cl:* key fallback", len(uuids)))
+		}
+		if len(uuids) == 0 {
+			return 0, fmt.Errorf("no notification UUIDs found in Redis; please create some first")
+		}
+	}
+
+	created := 0
+	for i := range count {
+		notifUUID := uuids[i%len(uuids)]
+
+		// Build a random fingerprint (96-hex-char string).
+		fp := fmt.Sprintf("%x%x", uuid.New(), uuid.New())
+		if len(fp) > 96 {
+			fp = fp[:96]
+		}
+
+		rec := ackRecord{
+			Action:      action,
+			UUID:        notifUUID,
+			Date:        time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+			Fingerprint: fp,
+		}
+
+		payload, jsonErr := json.Marshal(rec)
+		if jsonErr != nil {
+			LogError(fmt.Sprintf("ack[%d]: failed to marshal JSON: %v", i+1, jsonErr))
+			continue
+		}
+
+		// Key = ack:<md5(payload)>
+		hash := md5.Sum(payload)
+		key := fmt.Sprintf("ack:%x", hash)
+
+		setErr := redisClient.Set(redisCtx, key, string(payload), 0).Err()
+		if setErr != nil {
+			LogRedisError("set ack", key, setErr, iteration, total)
+		} else {
+			LogRedisOperation("create ack", key, "", iteration, total)
+			created++
+		}
+	}
+
+	return created, nil
 }
