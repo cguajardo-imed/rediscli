@@ -298,8 +298,8 @@ func TestGenerateAckRecords_PayloadShape(t *testing.T) {
 	if rec.Fingerprint == "" {
 		t.Error("fingerprint: field is empty")
 	}
-	if len(rec.Fingerprint) > 96 {
-		t.Errorf("fingerprint: length %d exceeds max 96", len(rec.Fingerprint))
+	if len(rec.Fingerprint) != 128 {
+		t.Errorf("fingerprint: expected length 128 (SHA-512), got %d", len(rec.Fingerprint))
 	}
 
 	// Check date format (should be ISO 8601).
@@ -545,6 +545,46 @@ func TestGenerateAckRecords_IterationParameters(t *testing.T) {
 	if created != 3 {
 		t.Errorf("Expected 3 records, got %d", created)
 	}
+}
+
+// TestGenerateAckRecords_500msDelay verifies that ACK records are created
+// with a 500ms delay between each record.
+func TestGenerateAckRecords_500msDelay(t *testing.T) {
+	mr, redisClient, redisCtx := setupAckRedisContainer(t)
+	defer func() {
+		redisClient.Close()
+		mr.Close()
+	}()
+
+	notifUUID := "delay-test-uuid-1234-5678-90ab-cdef"
+	seedNotificationUUID(t, redisClient, redisCtx, notifUUID)
+
+	const count = 3
+	start := time.Now()
+	created, err := generateAckRecordsWithClient(redisClient, redisCtx, "receive", count, 1, 1)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if created != count {
+		t.Errorf("Expected %d records, got %d", count, created)
+	}
+
+	// Expected time: (count-1) * 500ms = 2 * 500ms = 1000ms
+	// Allow some tolerance for test execution overhead (±200ms)
+	expectedMin := time.Duration(count-1) * 500 * time.Millisecond
+	expectedMax := expectedMin + 400*time.Millisecond
+	toleranceMin := expectedMin - 200*time.Millisecond
+
+	if elapsed < toleranceMin {
+		t.Errorf("Elapsed time %v is less than expected minimum %v (with tolerance)", elapsed, toleranceMin)
+	}
+	if elapsed > expectedMax {
+		t.Errorf("Elapsed time %v exceeds expected maximum %v", elapsed, expectedMax)
+	}
+
+	t.Logf("Created %d ACK records in %v (expected ~%v)", count, elapsed, expectedMin)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

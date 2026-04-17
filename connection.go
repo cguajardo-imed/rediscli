@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	redis "github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +23,7 @@ var (
 // but they don't affect the application's functionality.
 type discardLogger struct{}
 
-func (d *discardLogger) Printf(ctx context.Context, format string, v ...interface{}) {
+func (d *discardLogger) Printf(ctx context.Context, format string, v ...any) {
 	// Discard all Redis library logs to suppress harmless warnings
 }
 
@@ -370,11 +369,7 @@ func generateAckRecordsWithClient(redisClient *redis.Client, redisCtx context.Co
 		notifUUID := uuids[i%len(uuids)]
 
 		// Build a random fingerprint (96-hex-char string).
-		fp := fmt.Sprintf("%x%x", uuid.New(), uuid.New())
-		if len(fp) > 96 {
-			fp = fp[:96]
-		}
-
+		fp := generateFingerprint()
 		rec := ackRecord{
 			Action:      action,
 			UUID:        notifUUID,
@@ -395,8 +390,11 @@ func generateAckRecordsWithClient(redisClient *redis.Client, redisCtx context.Co
 		setErr := redisClient.Set(redisCtx, key, string(payload), 0).Err()
 		if setErr != nil {
 			LogRedisError("set ack", key, setErr, iteration, total)
+			fmt.Printf("ERROR ACK Record: %s\n\r\n\r", setErr.Error())
 		} else {
 			LogRedisOperation("create ack", key, "", iteration, total)
+			fmt.Printf("ACK Record: %s \n\r %+v \n\r\n\r", key, rec)
+			// redisClient.Publish(redisCtx, "gns_events_channel", key)
 			created++
 		}
 	}
