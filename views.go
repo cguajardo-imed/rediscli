@@ -990,14 +990,14 @@ func executeActionOnce(action int, placeCode, serviceName, customParams string) 
 		switch action {
 		case 1:
 			// Publish create
-			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, 1, 1)
-			publishRecordWithIteration(key, channel, 1, 1)
+			key, value := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, 1, 1)
+			publishRecordWithIteration(ChannelValue{Key: key, Value: value}, 1, 1)
 			result = "Published create event successfully"
 			successful++
 		case 2:
 			// Publish create & delete
-			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, 1, 1)
-			publishRecordWithIteration(key, channel, 1, 1)
+			key, value := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, 1, 1)
+			publishRecordWithIteration(ChannelValue{Key: key, Value: value}, 1, 1)
 			time.Sleep(2 * time.Second)
 			err := client.Del(ctx, key).Err()
 			if err != nil {
@@ -1006,7 +1006,7 @@ func executeActionOnce(action int, placeCode, serviceName, customParams string) 
 			} else {
 				LogRedisOperation("delete", key, "", 1, 1)
 			}
-			publishRecordWithIteration(key, channel, 1, 1)
+			publishRecordWithIteration(ChannelValue{Key: key, Value: value}, 1, 1)
 			result = "Published create event successfully"
 			successful++
 		}
@@ -1095,13 +1095,13 @@ func performIterations(action, iterations int, delay time.Duration, placeCode, s
 		switch action {
 		case 1:
 			// Publish create
-			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, i, iterations)
-			publishRecordWithIteration(key, channel, i, iterations)
+			key, value := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, i, iterations)
+			publishRecordWithIteration(ChannelValue{Key: key, Value: value}, i, iterations)
 			successful++
 		case 2:
 			// Publish create & delete
-			key, channel := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, i, iterations)
-			publishRecordWithIteration(key, channel, i, iterations)
+			key, value := fakeRecordWithIterationAndParams(placeCode, serviceName, customParams, i, iterations)
+			publishRecordWithIteration(ChannelValue{Key: key, Value: value}, i, iterations)
 			time.Sleep(2 * time.Second)
 			err := client.Del(ctx, key).Err()
 			if err != nil {
@@ -1110,7 +1110,7 @@ func performIterations(action, iterations int, delay time.Duration, placeCode, s
 			} else {
 				LogRedisOperation("delete", key, "", i, iterations)
 			}
-			publishRecordWithIteration(key, channel, i, iterations)
+			publishRecordWithIteration(ChannelValue{Key: key, Value: value}, i, iterations)
 			successful++
 		}
 

@@ -204,12 +204,33 @@ func fakeRecordWithIterationAndParams(placeCode, serviceName, customParams strin
 	messageContent := fmt.Sprintf("This is a test message %s", time.Now().Format(time.UnixDate))
 	createdAt := time.Now().Format("2006-01-02T15:04:05Z07:00")
 
-	fullContent := fmt.Sprintf(`{"criticality":"low","title":"test","messages":[{"uuid":"12d8254b-f557-49fc-a665-98762d268a5d","content":"\u003cp\u003e%s\u003c/p\u003e","plain_text":"%s\n","created_at":"2026-02-12T14:29:44.896Z"}],"action":"","type":"alert","id":"15130809-cd02-450a-909e-4f33d06d0397","status":"pending","created_at":"%s"}`,
-		messageContent, messageContent, createdAt,
-	)
+	record := NotificationRecord{
+		Criticality: "low",
+		Title:       "test",
+		Messages: []NotificationMessage{
+			{
+				UUID:      "12d8254b-f557-49fc-a665-98762d268a5d",
+				Content:   fmt.Sprintf("<p>%s</p>", messageContent),
+				PlainText: messageContent + "\n",
+				CreatedAt: "2026-02-12T14:29:44.896Z",
+			},
+		},
+		Action:    "",
+		Type:      "alert",
+		ID:        parentUUID,
+		Status:    "pending",
+		CreatedAt: createdAt,
+	}
+
+	recordBytes, err := json.Marshal(record)
+	if err != nil {
+		LogError(fmt.Sprintf("failed to marshal notification record: %v", err))
+		return key, ""
+	}
+	fullContent := string(recordBytes)
 
 	duration := time.Minute
-	err := client.Set(ctx, key, value, duration).Err()
+	err = client.Set(ctx, key, value, duration).Err()
 	if err != nil {
 		LogRedisError("set", key, err, iteration, total)
 	}
@@ -219,19 +240,30 @@ func fakeRecordWithIterationAndParams(placeCode, serviceName, customParams strin
 	} else {
 		LogRedisOperation("create", key, "", iteration, total)
 	}
-	return key, serviceName
+	return key, fullContent
 }
 
-func publishRecord(key, channel string) {
-	publishRecordWithIteration(key, channel, 0, 1)
+func publishRecord(key string, value string) {
+	publishRecordWithIteration(ChannelValue{Key: key, Value: value}, 0, 1)
 }
 
-func publishRecordWithIteration(key, channel string, iteration, total int) {
-	err := client.Publish(ctx, channel, key).Err()
+type ChannelValue struct {
+	Key   string
+	Value string
+}
+
+func publishRecordWithIteration(cv ChannelValue, iteration, total int) {
+	const notificationsChannel = "notifications:all"
+	data, err := json.Marshal(cv)
 	if err != nil {
-		LogRedisError("publish", key, err, iteration, total)
+		LogRedisError("publish", cv.Key, err, iteration, total)
+		return
+	}
+	err = client.Publish(ctx, notificationsChannel, data).Err()
+	if err != nil {
+		LogRedisError("publish", cv.Key, err, iteration, total)
 	} else {
-		LogRedisOperation("publish", key, channel, iteration, total)
+		LogRedisOperation("publish", cv.Key, notificationsChannel, iteration, total)
 	}
 }
 
