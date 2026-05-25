@@ -426,7 +426,6 @@ func generateAckRecordsWithClient(redisClient *redis.Client, redisCtx context.Co
 		} else {
 			LogRedisOperation("create ack", key, "", iteration, total)
 			fmt.Printf("ACK Record: %s \n\r %+v \n\r\n\r", key, rec)
-			// redisClient.Publish(redisCtx, "gns_events_channel", key)
 			created++
 		}
 	}
