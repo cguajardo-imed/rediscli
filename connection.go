@@ -253,7 +253,7 @@ type ChannelValue struct {
 }
 
 func publishRecordWithIteration(cv ChannelValue, iteration, total int) {
-	const notificationsChannel = "notifications:all"
+	const notificationsChannel = "gns_notifications_channel"channel"
 	data, err := json.Marshal(cv)
 	if err != nil {
 		LogRedisError("publish", cv.Key, err, iteration, total)
