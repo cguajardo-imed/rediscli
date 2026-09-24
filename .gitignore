@@ -50,3 +50,6 @@ temp/
 
 # CI/CD artifacts
 .github/workflows/artifacts/
+
+# Tronco activity log
+.tronco/

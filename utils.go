@@ -1,8 +1,8 @@
 package main
 
 import (
-	"slices"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )

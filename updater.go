@@ -15,7 +15,7 @@ import (
 
 const (
 	githubOwner   = "cguajardo-imed"
-	githubRepo    = "rediscli"
+	githubRepo    = "gns-cli"
 	githubAPIBase = "https://api.github.com"
 	releasesBase  = "https://github.com/" + githubOwner + "/" + githubRepo + "/releases/download"
 )
@@ -43,7 +43,7 @@ func fetchLatestRelease() (*githubRelease, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "rediscli/"+Version)
+	req.Header.Set("User-Agent", "gns-cli/"+Version)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -77,21 +77,21 @@ func platformBinaryName() (string, error) {
 	case "linux":
 		switch goarch {
 		case "amd64":
-			return "rediscli-linux-amd64", nil
+			return "gns-cli-linux-amd64", nil
 		case "arm64":
-			return "rediscli-linux-arm64", nil
+			return "gns-cli-linux-arm64", nil
 		}
 	case "darwin":
 		switch goarch {
 		case "amd64":
-			return "rediscli-darwin-amd64", nil
+			return "gns-cli-darwin-amd64", nil
 		case "arm64":
-			return "rediscli-darwin-arm64", nil
+			return "gns-cli-darwin-arm64", nil
 		}
 	case "windows":
 		switch goarch {
 		case "amd64":
-			return "rediscli-windows-amd64.exe", nil
+			return "gns-cli-windows-amd64.exe", nil
 		}
 	}
 
@@ -288,7 +288,7 @@ func SelfUpdate(progressFn func(msg string)) (*UpdateResult, error) {
 	// ── 6. Download new binary to a temp file ─────────────────
 	progress(fmt.Sprintf("Downloading %s…", binaryURL))
 
-	tmpFile, err := os.CreateTemp(filepath.Dir(exePath), "rediscli-update-*")
+	tmpFile, err := os.CreateTemp(filepath.Dir(exePath), "gns-cli-update-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -322,7 +322,7 @@ func SelfUpdate(progressFn func(msg string)) (*UpdateResult, error) {
 		return nil, err
 	}
 
-	progress("Update complete. Restart rediscli to use the new version.")
+	progress("Update complete. Restart gns-cli to use the new version.")
 
 	return &UpdateResult{
 		PreviousVersion: currentVersion,

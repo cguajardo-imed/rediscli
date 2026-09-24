@@ -1,6 +1,6 @@
 .PHONY: build test clean run help
 
-BINARY_NAME=rediscli
+BINARY_NAME=gns-cli
 VERSION?=dev
 GO=go
 LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION)"

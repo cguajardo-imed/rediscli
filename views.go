@@ -47,6 +47,9 @@ type model struct {
 	ackActionSelect bool // true when selecting receive/read action
 	ackActionChoice int  // 0 = receive, 1 = read
 	ackCountInput   string
+	// Sample notification
+	sampleMode   bool
+	sampleChoice int
 	// Redis Explorer
 	explorerActive bool
 	explorer       explorerModel
@@ -198,6 +201,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ackActionChoice = 0
 				m.Chosen = false
 				return m, nil
+			} else if m.sampleMode {
+				// Exit sample variant selection and return to main menu
+				m.sampleMode = false
+				m.sampleChoice = 0
+				m.Chosen = false
+				return m, nil
 			} else if m.ackMode {
 				// Exit ack count input and return to action selection
 				m.ackMode = false
@@ -247,6 +256,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// User selected receive or read action
 				m.ackActionSelect = false
 				m.ackMode = true
+				return m, nil
+			}
+
+			if m.sampleMode {
+				result, err := generateSampleNotification(m.sampleChoice)
+				if err != nil {
+					m.queryResult = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.queryResult = result
+				}
+				m.sampleMode = false
+				m.sampleChoice = 0
+				m.Chosen = false
 				return m, nil
 			}
 
@@ -428,12 +450,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Chosen = false
 				return m, nil
 			case 4:
+				// Generate Sample Notification
+				m.sampleMode = true
+				m.sampleChoice = 0
+				m.Chosen = false
+				return m, nil
+			case 5:
 				// Redis Explorer
 				m.explorer = newExplorerModel()
 				m.explorerActive = true
 				m.Chosen = false
 				return m, m.explorer.Init()
-			case 5:
+			case 6:
 				// Self-update — only reachable when updateAvailable is true
 				if m.updateAvailable {
 					m.updateMode = true
@@ -451,6 +479,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.ackActionChoice > 0 {
 					m.ackActionChoice--
 				}
+			} else if m.sampleMode {
+				if m.sampleChoice > 0 {
+					m.sampleChoice--
+				}
 			} else if m.publishModeSelect {
 				if m.publishModeChoice > 0 {
 					m.publishModeChoice--
@@ -466,14 +498,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.ackActionChoice < 1 {
 					m.ackActionChoice++
 				}
+			} else if m.sampleMode {
+				maxSampleChoice := len(sampleVariantNames()) - 1
+				if m.sampleChoice < maxSampleChoice {
+					m.sampleChoice++
+				}
 			} else if m.publishModeSelect {
 				if m.publishModeChoice < 1 {
 					m.publishModeChoice++
 				}
 			} else if !m.Chosen && !m.queryMode && m.queryResult == "" {
-				maxChoice := 4
+				maxChoice := 5
 				if m.updateAvailable {
-					maxChoice = 5
+					maxChoice = 6
 				}
 				if m.Choice < maxChoice {
 					m.Choice++
@@ -645,6 +682,10 @@ func (m model) View() string {
 		return customInputView(m)
 	}
 
+	if m.sampleMode {
+		return sampleView(m)
+	}
+
 	if m.iterationMode {
 		return iterationView(m)
 	}
@@ -681,27 +722,46 @@ func choicesView(m model) string {
 	var choices string
 	if m.updateAvailable {
 		choices = fmt.Sprintf(
+			"%s\n%s\n%s\n%s\n%s\n%s\n%s",
+			checkbox("Query Redis", c == 0),
+			checkbox("Publish create", c == 1),
+			checkbox("Publish create & delete", c == 2),
+			checkbox("Generate Ack Records", c == 3),
+			checkbox("Generate Sample Notification", c == 4),
+			checkbox("Redis Explorer", c == 5),
+			checkbox(fmt.Sprintf("Update gns-cli  %s → %s",
+				Version, m.latestVersion), c == 6),
+		)
+	} else {
+		choices = fmt.Sprintf(
 			"%s\n%s\n%s\n%s\n%s\n%s",
 			checkbox("Query Redis", c == 0),
 			checkbox("Publish create", c == 1),
 			checkbox("Publish create & delete", c == 2),
 			checkbox("Generate Ack Records", c == 3),
-			checkbox("Redis Explorer", c == 4),
-			checkbox(fmt.Sprintf("Update rediscli  %s → %s",
-				Version, m.latestVersion), c == 5),
-		)
-	} else {
-		choices = fmt.Sprintf(
-			"%s\n%s\n%s\n%s\n%s",
-			checkbox("Query Redis", c == 0),
-			checkbox("Publish create", c == 1),
-			checkbox("Publish create & delete", c == 2),
-			checkbox("Generate Ack Records", c == 3),
-			checkbox("Redis Explorer", c == 4),
+			checkbox("Generate Sample Notification", c == 4),
+			checkbox("Redis Explorer", c == 5),
 		)
 	}
 
 	return fmt.Sprintf(tpl, choices)
+}
+
+func sampleView(m model) string {
+	variants := sampleVariantNames()
+
+	tpl := "Select a sample notification variant:\n\n"
+	tpl += "%s\n\n"
+	tpl += subtleStyle.Render("j/k, up/down: select") + dotStyle +
+		subtleStyle.Render("enter: generate") + dotStyle +
+		subtleStyle.Render("esc: back")
+
+	lines := make([]string, 0, len(variants))
+	for i, label := range variants {
+		lines = append(lines, checkbox(label, m.sampleChoice == i))
+	}
+
+	return fmt.Sprintf(tpl, strings.Join(lines, "\n"))
 }
 
 // Publish mode selection view
@@ -1052,14 +1112,6 @@ func waitForProgress(progressChan chan progressMsg) tea.Cmd {
 	}
 }
 
-// Listen for next progress update
-func listenForProgress() tea.Cmd {
-	return func() tea.Msg {
-		// This will be replaced by channel-based updates
-		return nil
-	}
-}
-
 // Perform iterations with progress updates
 func performIterations(action, iterations int, delay time.Duration, placeCode, serviceName, customParams string, progressChan chan progressMsg) {
 	defer close(progressChan)
@@ -1152,7 +1204,7 @@ type resultMsg struct {
 func updateView(m model) string {
 	var b strings.Builder
 
-	b.WriteString(keywordStyle.Render("Update rediscli"))
+	b.WriteString(keywordStyle.Render("Update gns-cli"))
 	b.WriteString("\n\n")
 
 	for _, line := range m.updateLines {

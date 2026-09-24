@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,7 +46,7 @@ func InitLogger(tuiMode bool) error {
 
 		// Create log file with timestamp
 		timestamp := time.Now().Format("2006-01-02_15-04-05")
-		logFilePath = filepath.Join(logsDir, fmt.Sprintf("rediscli_%s.log", timestamp))
+		logFilePath = filepath.Join(logsDir, fmt.Sprintf("gns-cli_%s.log", timestamp))
 
 		var err error
 		logFile, err = os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -198,21 +199,12 @@ func LogSummary(operation string, total, successful, failed int, duration time.D
 		operation, total, successful, failed, duration,
 	)
 	LogInfo(message)
-	LogInfo("=" + repeat("=", 80))
-}
-
-// Helper function to repeat a string
-func repeat(s string, count int) string {
-	result := ""
-	for i := 0; i < count; i++ {
-		result += s
-	}
-	return result
+	LogInfo("=" + strings.Repeat("=", 80))
 }
 
 // LogBanner logs a banner message
 func LogBanner(message string) {
-	separator := repeat("=", 80)
+	separator := strings.Repeat("=", 80)
 	LogInfo(separator)
 	LogInfo(fmt.Sprintf("  %s", message))
 	LogInfo(separator)
@@ -220,11 +212,11 @@ func LogBanner(message string) {
 
 // LogConfig logs configuration information
 func LogConfig(config *Config) {
-	LogBanner("Redis Configuration")
+	LogBanner("GNS CLI Configuration")
 	LogInfo(fmt.Sprintf("Host: %s", config.Host))
 	LogInfo(fmt.Sprintf("Port: %s", config.Port))
 	LogInfo(fmt.Sprintf("Database: %d", config.DB))
 	LogInfo(fmt.Sprintf("Pool Size: %d", config.PoolSize))
 	LogInfo(fmt.Sprintf("Min Idle Connections: %d", config.MinIdleConns))
-	LogInfo(repeat("=", 80))
+	LogInfo(strings.Repeat("=", 80))
 }

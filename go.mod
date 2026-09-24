@@ -1,4 +1,4 @@
-module rediscli
+module gns-cli
 
 go 1.24.4
 

@@ -253,7 +253,7 @@ type ChannelValue struct {
 }
 
 func publishRecordWithIteration(cv ChannelValue, iteration, total int) {
-	const notificationsChannel = "gns_notifications_channel"channel"
+	const notificationsChannel = "gns_notifications_channel"
 	data, err := json.Marshal(cv)
 	if err != nil {
 		LogRedisError("publish", cv.Key, err, iteration, total)
@@ -275,8 +275,8 @@ func getStats() (map[string]string, error) {
 	}
 
 	stats := make(map[string]string)
-	lines := strings.SplitSeq(info, "\r\n")
-	for line := range lines {
+	lines := strings.Split(info, "\r\n")
+	for _, line := range lines {
 		if strings.Contains(line, ":") && !strings.HasPrefix(line, "#") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {

@@ -31,7 +31,7 @@ func main() {
 	if len(args) > 0 {
 		switch args[0] {
 		case "-v", "--version":
-			fmt.Printf("rediscli version %s\n", Version)
+			fmt.Printf("gns-cli version %s\n", Version)
 			return
 		case "-h", "--help":
 			printHelp()
@@ -98,7 +98,7 @@ func main() {
 		ackCountInput:   "",
 	}
 
-	LogBanner("Redis CLI Starting in TUI Mode")
+	LogBanner("GNS CLI Starting in TUI Mode")
 
 	p := tea.NewProgram(initialModel)
 	if _, err := p.Run(); err != nil {
@@ -111,27 +111,27 @@ func main() {
 
 func printHelp() {
 	help := `
-██████╗ ███████╗██████╗ ██╗███████╗ ██████╗██╗     ██╗
-██╔══██╗██╔════╝██╔══██╗██║██╔════╝██╔════╝██║     ██║
-██████╔╝█████╗  ██║  ██║██║███████╗██║     ██║     ██║
-██╔══██╗██╔══╝  ██║  ██║██║╚════██║██║     ██║     ██║
-██║  ██║███████╗██████╔╝██║███████║╚██████╗███████╗██║
-╚═╝  ╚═╝╚══════╝╚═════╝ ╚═╝╚══════╝ ╚═════╝╚══════╝╚═╝
-                                         By Carlos Guajardo C.
+ ██████╗ ███╗   ██╗███████╗      ██████╗██╗     ██╗
+██╔════╝ ████╗  ██║██╔════╝     ██╔════╝██║     ██║
+██║  ███╗██╔██╗ ██║███████╗     ██║     ██║     ██║
+██║   ██║██║╚██╗██║╚════██║     ██║     ██║     ██║
+╚██████╔╝██║ ╚████║███████║     ╚██████╗███████╗██║
+ ╚═════╝ ╚═╝  ╚═══╝╚══════╝      ╚═════╝╚══════╝╚═╝
+                                          By Carlos Guajardo C.
 
-rediscli - Redis CLI Tool
+gns-cli - GNS Command Line Tool
 
 USAGE:
-    rediscli [command] [args...]
-    rediscli                    (starts interactive TUI mode)
+    gns-cli [command] [args...]
+    gns-cli                    (starts interactive TUI mode)
 
 EXAMPLES:
-    rediscli PING
-    rediscli SET mykey "Hello Redis"
-    rediscli GET mykey
-    rediscli KEYS "*"
-    rediscli HSET user:1 name "John Doe"
-    rediscli LPUSH mylist item1 item2 item3
+    gns-cli PING
+    gns-cli SET mykey "Hello Redis"
+    gns-cli GET mykey
+    gns-cli KEYS "*"
+    gns-cli HSET user:1 name "John Doe"
+    gns-cli LPUSH mylist item1 item2 item3
 
 ENVIRONMENT VARIABLES:
     REDIS_HOST      Redis host (required)
@@ -184,12 +184,22 @@ INTERACTIVE MODE:
        (created via "Publish Create"). At least one notification record must
        exist before generating acks.
 
-    5. Redis Explorer
-       A full-screen TUI browser for your Redis databases.
+	    5. Generate Sample Notification
+	       Generates and publishes exactly one sample notification record using
+	       one selected variant:
+	         - Markdown content
+	         - HTML content
+	         - Long content (>400 chars)
+	         - Short content
+	         - Type variants: alert, info, warning, error
+	         - Criticality variants: low, medium, high
 
-    6. Update rediscli
-       Downloads and installs the latest release from GitHub, replacing the
-       current binary in place. The update process:
+	    6. Redis Explorer
+	       A full-screen TUI browser for your Redis databases.
+
+	    7. Update gns-cli
+	       Downloads and installs the latest release from GitHub, replacing the
+	       current binary in place. The update process:
          - Queries the GitHub releases API for the latest version tag
          - Compares it against the currently running version
          - Downloads the correct binary for your platform (linux/darwin/windows,
@@ -198,7 +208,7 @@ INTERACTIVE MODE:
          - Atomically replaces the running binary (backs up the current one
            first and restores it automatically if anything goes wrong)
          - Reports each step live on screen as it progresses
-       Restart rediscli after a successful update to run the new version.
+       Restart gns-cli after a successful update to run the new version.
        Supported platforms: linux-amd64, linux-arm64, darwin-amd64,
                             darwin-arm64, windows-amd64.
 
@@ -227,7 +237,7 @@ INTERACTIVE MODE:
          q                     exit the explorer
 
 LOGGING:
-    In TUI mode every session is logged to logs/rediscli_<timestamp>.log.
+    In TUI mode every session is logged to logs/gns-cli_<timestamp>.log.
     The log file path is printed when the session ends.
 `
 	fmt.Print(help)

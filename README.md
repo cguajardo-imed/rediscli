@@ -1,6 +1,8 @@
-# rediscli
+# gns-cli
 
-A Redis CLI tool with an interactive TUI (Terminal User Interface) built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A GNS command-line tool with an interactive TUI (Terminal User Interface) built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+
+Designed to help simulate GNS use cases and generate notifications without having to log into `gns-front` and navigate the full UI. Purpose-built for repetitive development and QA tasks.
 
 ---
 
@@ -9,9 +11,11 @@ A Redis CLI tool with an interactive TUI (Terminal User Interface) built with [B
 - **CLI mode** — send any Redis command directly from the terminal
 - **TUI mode** — interactive menu driven interface for common workflows
 - **Query Redis** — execute arbitrary Redis commands and display results
-- **Publish Create** — create and publish test records with default or custom parameters
+- **Publish Create** — create and publish test notification records with default or custom parameters
 - **Publish Create & Delete** — create, publish, then delete records (simulates a full lifecycle)
+- **Generate Ack Records** — create acknowledgement records for existing notification UUIDs
 - **Redis Explorer** — full-screen database browser with DB selector, key-value table, filter and value viewer
+- **Self-update** — download and install the latest release from GitHub in one step
 - **Session logging** — every TUI session is saved to a timestamped log file
 
 ---
@@ -28,8 +32,8 @@ A Redis CLI tool with an interactive TUI (Terminal User Interface) built with [B
 ### Clone and build
 
 ```sh
-git clone https://github.com/your-org/rediscli.git
-cd rediscli
+git clone https://github.com/cguajardo-imed/gns-cli.git
+cd gns-cli
 ```
 
 **Linux / macOS**
@@ -56,14 +60,14 @@ go run .
 
 Configuration is loaded from environment variables. Copy `.env.example` to `.env` and fill in your values, or export them directly in your shell.
 
-| Variable              | Required | Default | Description                        |
-| --------------------- | -------- | ------- | ---------------------------------- |
-| `REDIS_HOST`          | Yes      | —       | Redis server hostname or IP        |
-| `REDIS_PORT`          | No       | `6379`  | Redis server port                  |
-| `REDIS_PASSWORD`      | No       | —       | Redis password                     |
-| `REDIS_DB`            | No       | `0`     | Default database number (0-15)     |
-| `REDIS_POOL_SIZE`     | No       | `200`   | Connection pool size               |
-| `REDIS_MIN_IDLE_CONNS`| No       | `50`    | Minimum number of idle connections |
+| Variable               | Required | Default | Description                        |
+| ---------------------- | -------- | ------- | ---------------------------------- |
+| `REDIS_HOST`           | Yes      | —       | Redis server hostname or IP        |
+| `REDIS_PORT`           | No       | `6379`  | Redis server port                  |
+| `REDIS_PASSWORD`       | No       | —       | Redis password                     |
+| `REDIS_DB`             | No       | `0`     | Default database number (0-15)     |
+| `REDIS_POOL_SIZE`      | No       | `200`   | Connection pool size               |
+| `REDIS_MIN_IDLE_CONNS` | No       | `50`    | Minimum number of idle connections |
 
 **.env example**
 
@@ -83,7 +87,7 @@ REDIS_DB=0
 Start the interactive interface by running without arguments:
 
 ```sh
-./rediscli
+./gns-cli
 ```
 
 ### CLI mode
@@ -91,19 +95,19 @@ Start the interactive interface by running without arguments:
 Pass any Redis command as arguments:
 
 ```sh
-./rediscli PING
-./rediscli SET mykey "Hello Redis"
-./rediscli GET mykey
-./rediscli KEYS "*"
-./rediscli HSET user:1 name "John Doe" age "30"
-./rediscli LPUSH mylist item1 item2 item3
+./gns-cli PING
+./gns-cli SET mykey "Hello Redis"
+./gns-cli GET mykey
+./gns-cli KEYS "*"
+./gns-cli HSET user:1 name "John Doe" age "30"
+./gns-cli LPUSH mylist item1 item2 item3
 ```
 
 ### Flags
 
 ```sh
-./rediscli -h, --help      # show help
-./rediscli -v, --version   # show version
+./gns-cli -h, --help      # show help
+./gns-cli -v, --version   # show version
 ```
 
 ---
@@ -128,7 +132,7 @@ Execute any Redis command interactively and display the result inline.
 
 ### 2. Publish Create
 
-Creates a test record in Redis and publishes it to a channel.
+Creates a test notification record in Redis and publishes it to the GNS channel.
 
 **Flow:**
 
@@ -180,34 +184,7 @@ Successfully created 10 ack record(s) with action 'receive'
 
 ---
 
-### 5. Update rediscli
-
-Downloads and installs the latest release from GitHub, replacing the current
-binary in place.
-
-**Update process:**
-
-1. Queries the GitHub releases API for the latest version tag
-2. Compares it against the currently running version — exits early if already up to date
-3. Downloads the correct binary for your platform
-4. Verifies the **SHA-256 checksum** of the downloaded file
-5. Atomically replaces the running binary (backs up the current one first and
-   restores it automatically if anything goes wrong)
-6. Reports each step live on screen as it progresses
-
-Restart rediscli after a successful update to run the new version.
-
-**Supported platforms:**
-
-| OS      | Architecture |
-| ------- | ------------ |
-| Linux   | amd64, arm64 |
-| macOS   | amd64, arm64 |
-| Windows | amd64        |
-
----
-
-### 6. Redis Explorer
+### 5. Redis Explorer
 
 A full-screen TUI browser for your Redis databases.
 
@@ -262,32 +239,59 @@ The status bar shows `N / total key(s) match "query"` while a filter is active.
 
 Shows the full, word-wrapped value of the selected key inside a rounded border box.
 
-| Key                      | Action              |
-| ------------------------ | ------------------- |
+| Key                           | Action              |
+| ----------------------------- | ------------------- |
 | `esc` / `enter` / `backspace` | back to the table   |
-| `q`                      | exit the explorer   |
+| `q`                           | exit the explorer   |
+
+---
+
+### 6. Update gns-cli
+
+Downloads and installs the latest release from GitHub, replacing the current
+binary in place.
+
+**Update process:**
+
+1. Queries the GitHub releases API for the latest version tag
+2. Compares it against the currently running version — exits early if already up to date
+3. Downloads the correct binary for your platform
+4. Verifies the **SHA-256 checksum** of the downloaded file
+5. Atomically replaces the running binary (backs up the current one first and
+   restores it automatically if anything goes wrong)
+6. Reports each step live on screen as it progresses
+
+Restart gns-cli after a successful update to run the new version.
+
+**Supported platforms:**
+
+| OS      | Architecture |
+| ------- | ------------ |
+| Linux   | amd64, arm64 |
+| macOS   | amd64, arm64 |
+| Windows | amd64        |
 
 ---
 
 ## Updating
 
-The built-in updater can be triggered from the TUI menu (**Update rediscli**) or
-you can run it from the command line by launching the TUI and selecting option 5.
+The built-in updater can be triggered from the TUI menu (**Update gns-cli**) or
+you can run it from the command line by launching the TUI and selecting that option.
 
 The updater pulls releases from:
 
 ```
-https://github.com/cguajardo-imed/rediscli/releases/latest
+https://github.com/cguajardo-imed/gns-cli/releases/latest
 ```
 
 Binary asset naming convention:
 
 ```
-rediscli-linux-amd64
-rediscli-linux-arm64
-rediscli-darwin-amd64
-rediscli-darwin-arm64
-rediscli-windows-amd64.exe
+gns-cli-linux-amd64
+gns-cli-linux-arm64
+gns-cli-darwin-amd64
+gns-cli-darwin-arm64
+gns-cli-windows-amd64.exe
 ```
 
 Each asset ships with a `.sha256` checksum file that is verified before the
@@ -300,7 +304,7 @@ binary is installed.
 In TUI mode every session is written to a timestamped log file:
 
 ```
-logs/rediscli_2025-01-15_14-30-00.log
+logs/gns-cli_2025-01-15_14-30-00.log
 ```
 
 The log file path is printed when the session ends. In CLI mode output goes directly to stdout.
@@ -314,7 +318,7 @@ The log file path is printed when the session ends. In CLI mode output goes dire
 make build VERSION=1.2.0
 
 # Manual
-go build -ldflags "-s -w -X main.Version=1.2.0" -o rediscli .
+go build -ldflags "-s -w -X main.Version=1.2.0" -o gns-cli .
 ```
 
 ---
@@ -337,18 +341,23 @@ make clean
 ## Project Structure
 
 ```
-rediscli/
-├── main.go          # Entry point, CLI/TUI dispatch, help text
-├── views.go         # Main TUI model, Update/View loop, all menu screens
-├── explorer.go      # Redis Explorer TUI (DB selector, table, filter, value viewer)
-├── connection.go    # Redis client initialisation, commands, health check
-├── config.go        # Configuration loading from environment variables
-├── logger.go        # Session logger (file in TUI mode, stdout in CLI mode)
-├── utils.go         # Shared helpers (formatting, validation, string utilities)
-├── main_test.go     # Tests
-├── Makefile         # Build, test, clean targets (Linux/macOS)
-├── build.bat        # Build script (Windows)
-└── logs/            # Auto-created; holds per-session log files
+gns-cli/
+├── main.go             # Entry point, CLI/TUI dispatch, help text
+├── views.go            # Main TUI model, Update/View loop, all menu screens
+├── explorer.go         # Redis Explorer TUI (DB selector, table, filter, value viewer)
+├── connection.go       # Redis client initialisation, commands, health check
+├── config.go           # Configuration loading from environment variables
+├── logger.go           # Session logger (file in TUI mode, stdout in CLI mode)
+├── utils.go            # Shared helpers (formatting, validation, string utilities)
+├── types.go            # Shared domain types (NotificationRecord, etc.)
+├── fingerprint_gen.go  # Browser-fingerprint simulator for ack records
+├── error_gen.go        # Error record generator
+├── updater.go          # Self-update logic (GitHub releases API)
+├── toast.go            # Toast notification overlay
+├── main_test.go        # Unit & integration tests (miniredis)
+├── Makefile            # Build, test, clean targets (Linux/macOS)
+├── build.bat           # Build script (Windows)
+└── logs/               # Auto-created; holds per-session log files
 ```
 
 ---

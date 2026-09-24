@@ -902,7 +902,7 @@ func wordWrap(s string, maxWidth int) string {
 		}
 
 		lineLen := 0
-		for wi, word := range words {
+		for _, word := range words {
 			// Hard-wrap words that are longer than maxWidth
 			for len(word) > maxWidth {
 				if lineLen > 0 {
@@ -933,7 +933,6 @@ func wordWrap(s string, maxWidth int) string {
 			}
 			result.WriteString(word)
 			lineLen += len(word)
-			_ = wi
 		}
 	}
 
