@@ -74,19 +74,19 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            output: rediscli-linux-amd64
+            output: gns-cli-linux-amd64
           - goos: linux
             goarch: arm64
-            output: rediscli-linux-arm64
+            output: gns-cli-linux-arm64
           - goos: windows
             goarch: amd64
-            output: rediscli-windows-amd64.exe
+            output: gns-cli-windows-amd64.exe
           - goos: darwin
             goarch: amd64
-            output: rediscli-darwin-amd64
+            output: gns-cli-darwin-amd64
           - goos: darwin
             goarch: arm64
-            output: rediscli-darwin-arm64
+            output: gns-cli-darwin-arm64
 
     steps:
       - name: Checkout code
@@ -109,11 +109,7 @@ jobs:
 
       - name: Create checksums
         run: |
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
-          else
-            sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
-          fi
+          sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
